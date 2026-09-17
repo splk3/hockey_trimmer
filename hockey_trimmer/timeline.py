@@ -128,7 +128,9 @@ class GameTimelineTracker:
                     self.final_horn_time = self.last_seen_scoreboard_time or ts
                     self.add_event(
                         ts,
-                        f"Scoreboard disappeared after Period 3 (final clock ~{int(self.last_clock)}s). Game end assumed.",
+                        "Scoreboard disappeared after Period 3 "
+                        f"(final clock ~{int(self.last_clock)}s). "
+                        "Game end assumed.",
                         reading,
                     )
                     self.state = GameState.GAME_COMPLETE

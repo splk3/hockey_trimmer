@@ -3,7 +3,7 @@ Scoreboard overlay detection and region-of-interest analysis.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 import numpy as np
 from PIL import Image
 

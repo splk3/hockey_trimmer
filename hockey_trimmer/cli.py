@@ -9,8 +9,7 @@ import time
 from typing import Optional
 
 from .detector import ScoreboardDetector
-from .ocr import ScoreboardOCR
-from .timeline import GameTimelineTracker, GameBoundaries, GameState
+from .timeline import GameTimelineTracker, GameBoundaries
 from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
 
 
@@ -46,7 +45,9 @@ def analyze_video(
 
     print(f"🎬 Analyzing video: {os.path.basename(video_path)}")
     print(
-        f"   Duration: {format_seconds(duration)} ({duration:.1f}s) | Resolution: {video_info.width}x{video_info.height}"
+        "   Duration: "
+        f"{format_seconds(duration)} ({duration:.1f}s) | "
+        f"Resolution: {video_info.width}x{video_info.height}"
     )
     print(f"   Preset: '{preset}' | Sample interval: {sample_interval:.1f}s")
     print(
@@ -61,7 +62,6 @@ def analyze_video(
     )
 
     t_curr = 0.0
-    total_samples = int(duration / sample_interval) + 1
     sample_idx = 0
     start_time_proc = time.time()
 
@@ -78,7 +78,9 @@ def analyze_video(
             if verbose and reading.present:
                 clock_str = reading.clock_formatted
                 print(
-                    f"   [{format_seconds(t_curr)}] P:{reading.period or '-'} | Clock: {clock_str} | Score: {reading.score or '-'}"
+                    f"   [{format_seconds(t_curr)}] "
+                    f"P:{reading.period or '-'} | "
+                    f"Clock: {clock_str} | Score: {reading.score or '-'}"
                 )
 
             if timeline.state != last_reported_state:
@@ -282,7 +284,7 @@ def main(argv: Optional[list] = None) -> int:
             f"   Proposed Cut: {format_seconds(boundaries.cut_start_time)} -> {format_seconds(boundaries.cut_end_time)}"
         )
     else:
-        print(f"✅ First Complete Game Identified:")
+        print("✅ First Complete Game Identified:")
         print(
             f"   • Opening Puck Drop: {format_seconds(boundaries.puck_drop_time)} ({boundaries.puck_drop_time:.1f}s)"
         )
@@ -290,7 +292,9 @@ def main(argv: Optional[list] = None) -> int:
             f"   • Final Horn (P3/OT): {format_seconds(boundaries.final_horn_time)} ({boundaries.final_horn_time:.1f}s)"
         )
         print(
-            f"   • Cut Window:        {format_seconds(boundaries.cut_start_time)} -> {format_seconds(boundaries.cut_end_time)}"
+            "   • Cut Window:        "
+            f"{format_seconds(boundaries.cut_start_time)} -> "
+            f"{format_seconds(boundaries.cut_end_time)}"
         )
         print(
             f"   • Cut Duration:      {boundaries.duration_formatted} ({boundaries.duration_seconds:.1f}s)"
