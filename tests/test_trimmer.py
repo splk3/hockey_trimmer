@@ -31,7 +31,9 @@ class TestVideoTrimmer(unittest.TestCase):
         # Mock keyframes at t = 0, 10, 20, 30, 40, 50, 60
         fake_keyframes = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
 
-        with patch("hockey_trimmer.trimmer.get_keyframes_near", return_value=fake_keyframes):
+        with patch(
+            "hockey_trimmer.trimmer.get_keyframes_near", return_value=fake_keyframes
+        ):
             # cut_start = 14.0 -> should snap to 10.0 (preceding)
             # cut_end = 45.0 -> should snap to 50.0 (subsequent)
             snapped_start, snapped_end = snap_to_keyframes("video.mp4", 14.0, 45.0)
@@ -43,10 +45,16 @@ class TestVideoTrimmer(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0)
 
         with patch("hockey_trimmer.trimmer.probe_video") as mock_probe:
-            mock_probe.return_value = VideoInfo("game.mp4", 3600.0, 1280, 720, 30.0, "h264", "aac")
-            with patch("hockey_trimmer.trimmer.snap_to_keyframes", return_value=(10.0, 50.0)):
+            mock_probe.return_value = VideoInfo(
+                "game.mp4", 3600.0, 1280, 720, 30.0, "h264", "aac"
+            )
+            with patch(
+                "hockey_trimmer.trimmer.snap_to_keyframes", return_value=(10.0, 50.0)
+            ):
                 trimmer = VideoTrimmer("game.mp4")
-                success = trimmer.trim("out.mp4", 14.0, 45.0, reencode=False, snap_keyframes=True)
+                success = trimmer.trim(
+                    "out.mp4", 14.0, 45.0, reencode=False, snap_keyframes=True
+                )
 
                 self.assertTrue(success)
                 self.assertTrue(mock_run.called)

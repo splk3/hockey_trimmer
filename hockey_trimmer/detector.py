@@ -13,6 +13,7 @@ from .ocr import ScoreboardOCR
 @dataclass
 class ScoreboardReading:
     """Represents the parsed scoreboard state from a single video frame."""
+
     present: bool
     timestamp: float
     period: Optional[int] = None
@@ -65,7 +66,9 @@ class ScoreboardDetector:
         ocr: Optional[ScoreboardOCR] = None,
     ):
         self.preset_name = preset.lower()
-        self.config = self.PRESETS.get(self.preset_name, self.PRESETS["blackbear"]).copy()
+        self.config = self.PRESETS.get(
+            self.preset_name, self.PRESETS["blackbear"]
+        ).copy()
         if custom_roi is not None:
             self.config["full_roi"] = custom_roi
 
@@ -103,35 +106,41 @@ class ScoreboardDetector:
         """
         w, h = frame.size
         px1, py1, px2, py2 = self._get_pixel_bbox(self.config["full_roi"], w, h)
-        crop = frame.crop((px1, py1, px2, py2)).convert('RGB')
+        crop = frame.crop((px1, py1, px2, py2)).convert("RGB")
         arr = np.array(crop)
 
         if arr.size == 0:
             return False, 0.0
 
         # Presence check 1: Scoreboard white box pixels (team/clock boxes)
-        white_pixels = np.sum((arr[:, :, 0] > 220) & (arr[:, :, 1] > 220) & (arr[:, :, 2] > 220))
+        white_pixels = np.sum(
+            (arr[:, :, 0] > 220) & (arr[:, :, 1] > 220) & (arr[:, :, 2] > 220)
+        )
         total_pixels = arr.shape[0] * arr.shape[1]
         white_ratio = white_pixels / total_pixels
 
         # Presence check 2: Blue header/period box (standard Black Bear TV)
-        blue_pixels = np.sum((arr[:, :, 2] > 160) & (arr[:, :, 0] < 70) & (arr[:, :, 1] < 160))
+        blue_pixels = np.sum(
+            (arr[:, :, 2] > 160) & (arr[:, :, 0] < 70) & (arr[:, :, 1] < 160)
+        )
         blue_ratio = blue_pixels / total_pixels
 
         if self.preset_name == "blackbear":
             if white_ratio > 0.08 and blue_ratio > 0.005:
-                confidence = min(1.0, (white_ratio / 0.15) * 0.7 + (blue_ratio / 0.02) * 0.3)
+                confidence = min(
+                    1.0, (white_ratio / 0.15) * 0.7 + (blue_ratio / 0.02) * 0.3
+                )
                 return True, float(confidence)
             return False, 0.0
 
         # Generic presence check: high-contrast horizontal/vertical edges or solid blocks
-        gray = np.array(crop.convert('L'))
+        gray = np.array(crop.convert("L"))
         grad_y = np.abs(np.diff(gray, axis=0))
         grad_x = np.abs(np.diff(gray, axis=1))
         high_edges = np.sum(grad_y > 80) + np.sum(grad_x > 80)
         edge_ratio = high_edges / total_pixels
 
-        is_present = (white_ratio > 0.10 or edge_ratio > 0.05)
+        is_present = white_ratio > 0.10 or edge_ratio > 0.05
         conf = min(1.0, edge_ratio * 10) if is_present else 0.0
         return is_present, float(conf)
 

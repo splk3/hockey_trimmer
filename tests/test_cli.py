@@ -26,7 +26,17 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.preset, "blackbear")
 
     def test_parse_args_check_mode(self):
-        args = parse_args(["-i", "game.mp4", "--check", "--buffer-before", "10", "--buffer-after", "20"])
+        args = parse_args(
+            [
+                "-i",
+                "game.mp4",
+                "--check",
+                "--buffer-before",
+                "10",
+                "--buffer-after",
+                "20",
+            ]
+        )
         self.assertEqual(args.input, "game.mp4")
         self.assertTrue(args.check)
         self.assertIsNone(args.output)
@@ -34,7 +44,17 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.buffer_after, 20.0)
 
     def test_parse_args_custom_roi_and_reencode(self):
-        args = parse_args(["-i", "game.mp4", "-o", "out.mp4", "--roi", "0.05,0.05,0.30,0.25", "--reencode"])
+        args = parse_args(
+            [
+                "-i",
+                "game.mp4",
+                "-o",
+                "out.mp4",
+                "--roi",
+                "0.05,0.05,0.30,0.25",
+                "--reencode",
+            ]
+        )
         self.assertEqual(args.roi, "0.05,0.05,0.30,0.25")
         self.assertTrue(args.reencode)
 

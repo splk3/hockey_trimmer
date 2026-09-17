@@ -49,6 +49,10 @@ def create_synthetic_scoreboard_frame(
 
 if __name__ == "__main__":
     fixtures_dir = os.path.join(os.path.dirname(__file__), "fixtures")
-    create_synthetic_scoreboard_frame(os.path.join(fixtures_dir, "sample_scoreboard.png"))
-    create_synthetic_scoreboard_frame(os.path.join(fixtures_dir, "sample_empty.png"), has_scoreboard=False)
+    create_synthetic_scoreboard_frame(
+        os.path.join(fixtures_dir, "sample_scoreboard.png")
+    )
+    create_synthetic_scoreboard_frame(
+        os.path.join(fixtures_dir, "sample_empty.png"), has_scoreboard=False
+    )
     print(f"Generated fixtures in {fixtures_dir}")
