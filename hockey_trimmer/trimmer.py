@@ -13,6 +13,7 @@ from PIL import Image
 @dataclass
 class VideoInfo:
     """Metadata for a video file."""
+
     path: str
     duration: float
     width: int
@@ -28,12 +29,17 @@ def probe_video(video_path: str) -> VideoInfo:
     """
     cmd = [
         "ffprobe",
-        "-v", "error",
-        "-show_entries", "stream=codec_type,codec_name,width,height,r_frame_rate:format=duration",
-        "-of", "json",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,codec_name,width,height,r_frame_rate:format=duration",
+        "-of",
+        "json",
         video_path,
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+    res = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+    )
     data = json.loads(res.stdout)
 
     format_data = data.get("format", {})
@@ -70,22 +76,32 @@ def probe_video(video_path: str) -> VideoInfo:
     )
 
 
-def extract_frame_at_timestamp(video_path: str, timestamp_sec: float) -> Optional[Image.Image]:
+def extract_frame_at_timestamp(
+    video_path: str, timestamp_sec: float
+) -> Optional[Image.Image]:
     """
     Extract a single frame from video as a PIL Image using ffmpeg pipe.
     """
     cmd = [
         "ffmpeg",
-        "-ss", f"{timestamp_sec:.3f}",
-        "-i", video_path,
-        "-vframes", "1",
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "-q:v", "2",
+        "-ss",
+        f"{timestamp_sec:.3f}",
+        "-i",
+        video_path,
+        "-vframes",
+        "1",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "-q:v",
+        "2",
         "-",
     ]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+        proc = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True
+        )
         if proc.stdout:
             return Image.open(io.BytesIO(proc.stdout)).convert("RGB")
     except Exception:
@@ -93,7 +109,9 @@ def extract_frame_at_timestamp(video_path: str, timestamp_sec: float) -> Optiona
     return None
 
 
-def get_keyframes_near(video_path: str, center_time: float, window_sec: float = 15.0) -> List[float]:
+def get_keyframes_near(
+    video_path: str, center_time: float, window_sec: float = 15.0
+) -> List[float]:
     """
     Find keyframe (I-frame) timestamps around a center time.
     """
@@ -102,16 +120,28 @@ def get_keyframes_near(video_path: str, center_time: float, window_sec: float = 
 
     cmd = [
         "ffprobe",
-        "-v", "error",
-        "-read_intervals", f"{start_search:.2f}%+{duration_search:.2f}",
-        "-select_streams", "v",
-        "-skip_frame", "nokey",
-        "-show_entries", "frame=pkt_pts_time,pict_type",
-        "-of", "csv=p=0",
+        "-v",
+        "error",
+        "-read_intervals",
+        f"{start_search:.2f}%+{duration_search:.2f}",
+        "-select_streams",
+        "v",
+        "-skip_frame",
+        "nokey",
+        "-show_entries",
+        "frame=pkt_pts_time,pict_type",
+        "-of",
+        "csv=p=0",
         video_path,
     ]
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=True)
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=True,
+        )
         keyframes = []
         for line in res.stdout.strip().splitlines():
             parts = line.split(",")
@@ -180,14 +210,22 @@ class VideoTrimmer:
             cmd = [
                 "ffmpeg",
                 "-y",
-                "-ss", f"{actual_start:.3f}",
-                "-to", f"{actual_end:.3f}",
-                "-i", self.video_path,
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-c:a", "aac",
-                "-b:a", "192k",
+                "-ss",
+                f"{actual_start:.3f}",
+                "-to",
+                f"{actual_end:.3f}",
+                "-i",
+                self.video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
                 output_path,
             ]
         else:
@@ -195,13 +233,20 @@ class VideoTrimmer:
             cmd = [
                 "ffmpeg",
                 "-y",
-                "-ss", f"{actual_start:.3f}",
-                "-to", f"{actual_end:.3f}",
-                "-i", self.video_path,
-                "-c", "copy",
-                "-avoid_negative_ts", "make_zero",
+                "-ss",
+                f"{actual_start:.3f}",
+                "-to",
+                f"{actual_end:.3f}",
+                "-i",
+                self.video_path,
+                "-c",
+                "copy",
+                "-avoid_negative_ts",
+                "make_zero",
                 output_path,
             ]
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
         return res.returncode == 0

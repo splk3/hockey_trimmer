@@ -9,19 +9,20 @@ from .detector import ScoreboardReading
 
 
 class GameState(Enum):
-    SEARCHING_START = auto()    # Searching for Period 1 start
-    P1_RUNNING = auto()         # Period 1 actively in progress
-    INTERMISSION_1 = auto()     # Between P1 and P2
-    P2_RUNNING = auto()         # Period 2 actively in progress
-    INTERMISSION_2 = auto()     # Between P2 and P3
-    P3_RUNNING = auto()         # Period 3 actively in progress
-    OT_RUNNING = auto()         # Overtime in progress (if tied)
-    GAME_COMPLETE = auto()      # First complete game fully concluded
+    SEARCHING_START = auto()  # Searching for Period 1 start
+    P1_RUNNING = auto()  # Period 1 actively in progress
+    INTERMISSION_1 = auto()  # Between P1 and P2
+    P2_RUNNING = auto()  # Period 2 actively in progress
+    INTERMISSION_2 = auto()  # Between P2 and P3
+    P3_RUNNING = auto()  # Period 3 actively in progress
+    OT_RUNNING = auto()  # Overtime in progress (if tied)
+    GAME_COMPLETE = auto()  # First complete game fully concluded
 
 
 @dataclass
 class TimelineEvent:
     """An event detected along the game timeline."""
+
     timestamp: float
     description: str
     reading: Optional[ScoreboardReading] = None
@@ -40,6 +41,7 @@ class TimelineEvent:
 @dataclass
 class GameBoundaries:
     """Resulting cut boundaries for the detected game."""
+
     puck_drop_time: float
     final_horn_time: float
     cut_start_time: float
@@ -96,8 +98,15 @@ class GameTimelineTracker:
         self.ot_observed = False
         self.tied_at_p3_end = False
 
-    def add_event(self, timestamp: float, description: str, reading: Optional[ScoreboardReading] = None):
-        event = TimelineEvent(timestamp=timestamp, description=description, reading=reading)
+    def add_event(
+        self,
+        timestamp: float,
+        description: str,
+        reading: Optional[ScoreboardReading] = None,
+    ):
+        event = TimelineEvent(
+            timestamp=timestamp, description=description, reading=reading
+        )
         self.events.append(event)
 
     def process_reading(self, reading: ScoreboardReading) -> bool:
@@ -119,7 +128,9 @@ class GameTimelineTracker:
                     self.final_horn_time = self.last_seen_scoreboard_time or ts
                     self.add_event(
                         ts,
-                        f"Scoreboard disappeared after Period 3 (final clock ~{int(self.last_clock)}s). Game end assumed.",
+                        "Scoreboard disappeared after Period 3 "
+                        f"(final clock ~{int(self.last_clock)}s). "
+                        "Game end assumed.",
                         reading,
                     )
                     self.state = GameState.GAME_COMPLETE
@@ -183,7 +194,9 @@ class GameTimelineTracker:
             if period == 2:
                 self.p2_observed = True
                 self.state = GameState.P2_RUNNING
-                self.add_event(ts, f"Period 2 began (Score: {score or 'unknown'})", reading)
+                self.add_event(
+                    ts, f"Period 2 began (Score: {score or 'unknown'})", reading
+                )
             elif period == 1 and clock is not None and clock <= 2.0:
                 self.add_event(ts, "Period 1 ended (Clock reached 0:00)", reading)
                 self.state = GameState.INTERMISSION_1
@@ -195,7 +208,9 @@ class GameTimelineTracker:
             if period == 2:
                 self.p2_observed = True
                 self.state = GameState.P2_RUNNING
-                self.add_event(ts, f"Period 2 began (Score: {score or 'unknown'})", reading)
+                self.add_event(
+                    ts, f"Period 2 began (Score: {score or 'unknown'})", reading
+                )
 
         # -------------------------------------------------------------
         # STATE 4: P2_RUNNING
@@ -204,7 +219,9 @@ class GameTimelineTracker:
             if period == 3:
                 self.p3_observed = True
                 self.state = GameState.P3_RUNNING
-                self.add_event(ts, f"Period 3 began (Score: {score or 'unknown'})", reading)
+                self.add_event(
+                    ts, f"Period 3 began (Score: {score or 'unknown'})", reading
+                )
             elif period == 2 and clock is not None and clock <= 2.0:
                 self.add_event(ts, "Period 2 ended (Clock reached 0:00)", reading)
                 self.state = GameState.INTERMISSION_2
@@ -216,7 +233,9 @@ class GameTimelineTracker:
             if period == 3:
                 self.p3_observed = True
                 self.state = GameState.P3_RUNNING
-                self.add_event(ts, f"Period 3 began (Score: {score or 'unknown'})", reading)
+                self.add_event(
+                    ts, f"Period 3 began (Score: {score or 'unknown'})", reading
+                )
 
         # -------------------------------------------------------------
         # STATE 6: P3_RUNNING
@@ -260,7 +279,9 @@ class GameTimelineTracker:
         elif self.state == GameState.OT_RUNNING:
             if clock is not None and clock <= 2.0:
                 self.final_horn_time = ts
-                self.add_event(ts, "Overtime ended (0:00 on clock). Game complete!", reading)
+                self.add_event(
+                    ts, "Overtime ended (0:00 on clock). Game complete!", reading
+                )
                 self.state = GameState.GAME_COMPLETE
                 return True
 
@@ -291,7 +312,9 @@ class GameTimelineTracker:
         cut_start = max(0.0, puck_drop - self.buffer_before)
         cut_end = min(self.video_duration, final_horn + self.buffer_after)
 
-        game_found = self.p1_observed and (self.p3_observed or self.state == GameState.GAME_COMPLETE)
+        game_found = self.p1_observed and (
+            self.p3_observed or self.state == GameState.GAME_COMPLETE
+        )
         summary = (
             f"Puck drop: {puck_drop:.1f}s | Final horn: {final_horn:.1f}s | "
             f"Cut: {cut_start:.1f}s -> {cut_end:.1f}s (Duration: {cut_end - cut_start:.1f}s)"

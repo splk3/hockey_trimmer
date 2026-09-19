@@ -9,8 +9,7 @@ import time
 from typing import Optional
 
 from .detector import ScoreboardDetector
-from .ocr import ScoreboardOCR
-from .timeline import GameTimelineTracker, GameBoundaries, GameState
+from .timeline import GameTimelineTracker, GameBoundaries
 from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
 
 
@@ -45,9 +44,15 @@ def analyze_video(
     duration = video_info.duration
 
     print(f"🎬 Analyzing video: {os.path.basename(video_path)}")
-    print(f"   Duration: {format_seconds(duration)} ({duration:.1f}s) | Resolution: {video_info.width}x{video_info.height}")
+    print(
+        "   Duration: "
+        f"{format_seconds(duration)} ({duration:.1f}s) | "
+        f"Resolution: {video_info.width}x{video_info.height}"
+    )
     print(f"   Preset: '{preset}' | Sample interval: {sample_interval:.1f}s")
-    print(f"   Buffers: {buffer_before:.1f}s before puck drop, {buffer_after:.1f}s after final horn")
+    print(
+        f"   Buffers: {buffer_before:.1f}s before puck drop, {buffer_after:.1f}s after final horn"
+    )
 
     detector = ScoreboardDetector(preset=preset, custom_roi=custom_roi)
     timeline = GameTimelineTracker(
@@ -57,7 +62,6 @@ def analyze_video(
     )
 
     t_curr = 0.0
-    total_samples = int(duration / sample_interval) + 1
     sample_idx = 0
     start_time_proc = time.time()
 
@@ -73,7 +77,11 @@ def analyze_video(
 
             if verbose and reading.present:
                 clock_str = reading.clock_formatted
-                print(f"   [{format_seconds(t_curr)}] P:{reading.period or '-'} | Clock: {clock_str} | Score: {reading.score or '-'}")
+                print(
+                    f"   [{format_seconds(t_curr)}] "
+                    f"P:{reading.period or '-'} | "
+                    f"Clock: {clock_str} | Score: {reading.score or '-'}"
+                )
 
             if timeline.state != last_reported_state:
                 last_reported_state = timeline.state
@@ -82,14 +90,20 @@ def analyze_video(
                     print(f"   ⚡ [{latest.timestamp_formatted}] {latest.description}")
 
             if is_complete:
-                print(f"   🏁 First complete game detected! Stopping scan at {format_seconds(t_curr)}.")
+                print(
+                    f"   🏁 First complete game detected! Stopping scan at {format_seconds(t_curr)}."
+                )
                 break
 
         t_curr += sample_interval
         sample_idx += 1
         if sample_idx % 20 == 0 and not verbose:
             pct = min(100.0, (t_curr / duration) * 100)
-            print(f"   Progress: {pct:.1f}% ({format_seconds(t_curr)} / {format_seconds(duration)})...", end="\r", flush=True)
+            print(
+                f"   Progress: {pct:.1f}% ({format_seconds(t_curr)} / {format_seconds(duration)})...",
+                end="\r",
+                flush=True,
+            )
 
     print(f"\n   Scan completed in {time.time() - start_time_proc:.1f}s.")
 
@@ -106,7 +120,10 @@ def analyze_video(
                 if f:
                     r = detector.analyze_frame(f, ts)
                     if r.present and r.period == 1 and r.clock_seconds is not None:
-                        if timeline.p1_max_clock and r.clock_seconds < timeline.p1_max_clock:
+                        if (
+                            timeline.p1_max_clock
+                            and r.clock_seconds < timeline.p1_max_clock
+                        ):
                             boundaries.puck_drop_time = ts
                             boundaries.cut_start_time = max(0.0, ts - buffer_before)
                             break
@@ -119,7 +136,11 @@ def analyze_video(
                 f = extract_frame_at_timestamp(video_path, ts)
                 if f:
                     r = detector.analyze_frame(f, ts)
-                    if r.present and (r.period == 3 or r.period == 4) and r.clock_seconds is not None:
+                    if (
+                        r.present
+                        and (r.period == 3 or r.period == 4)
+                        and r.clock_seconds is not None
+                    ):
                         if r.clock_seconds <= 1.0:
                             boundaries.final_horn_time = ts
                             boundaries.cut_end_time = min(duration, ts + buffer_after)
@@ -145,17 +166,20 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "-i", "--input",
+        "-i",
+        "--input",
         required=True,
         help="Path to the input video file (e.g., .mp4, .mov, .mkv).",
     )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         default=None,
         help="Path to the output trimmed video file. Required unless --check is set.",
     )
     parser.add_argument(
-        "-c", "--check",
+        "-c",
+        "--check",
         action="store_true",
         help="Analysis mode only: report detected game boundaries and events without modifying or cutting the file.",
     )
@@ -200,7 +224,8 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         help="Disable snapping cut points to adjacent keyframes when using stream copy.",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose output showing per-sample detection details.",
     )
@@ -212,7 +237,10 @@ def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
 
     if not args.check and not args.output:
-        print("❌ Error: -o / --output must be specified unless --check is used.", file=sys.stderr)
+        print(
+            "❌ Error: -o / --output must be specified unless --check is used.",
+            file=sys.stderr,
+        )
         return 1
 
     custom_roi = None
@@ -224,7 +252,10 @@ def main(argv: Optional[list] = None) -> int:
             else:
                 raise ValueError()
         except ValueError:
-            print("❌ Error: --roi must be 4 comma-separated numbers: 'x1,y1,x2,y2'", file=sys.stderr)
+            print(
+                "❌ Error: --roi must be 4 comma-separated numbers: 'x1,y1,x2,y2'",
+                file=sys.stderr,
+            )
             return 1
 
     try:
@@ -249,13 +280,25 @@ def main(argv: Optional[list] = None) -> int:
         print("⚠️ Warning: No complete game sequence (P1 -> P3) was identified.")
         print(f"   Puck drop candidate: {format_seconds(boundaries.puck_drop_time)}")
         print(f"   Final horn candidate: {format_seconds(boundaries.final_horn_time)}")
-        print(f"   Proposed Cut: {format_seconds(boundaries.cut_start_time)} -> {format_seconds(boundaries.cut_end_time)}")
+        print(
+            f"   Proposed Cut: {format_seconds(boundaries.cut_start_time)} -> {format_seconds(boundaries.cut_end_time)}"
+        )
     else:
-        print(f"✅ First Complete Game Identified:")
-        print(f"   • Opening Puck Drop: {format_seconds(boundaries.puck_drop_time)} ({boundaries.puck_drop_time:.1f}s)")
-        print(f"   • Final Horn (P3/OT): {format_seconds(boundaries.final_horn_time)} ({boundaries.final_horn_time:.1f}s)")
-        print(f"   • Cut Window:        {format_seconds(boundaries.cut_start_time)} -> {format_seconds(boundaries.cut_end_time)}")
-        print(f"   • Cut Duration:      {boundaries.duration_formatted} ({boundaries.duration_seconds:.1f}s)")
+        print("✅ First Complete Game Identified:")
+        print(
+            f"   • Opening Puck Drop: {format_seconds(boundaries.puck_drop_time)} ({boundaries.puck_drop_time:.1f}s)"
+        )
+        print(
+            f"   • Final Horn (P3/OT): {format_seconds(boundaries.final_horn_time)} ({boundaries.final_horn_time:.1f}s)"
+        )
+        print(
+            "   • Cut Window:        "
+            f"{format_seconds(boundaries.cut_start_time)} -> "
+            f"{format_seconds(boundaries.cut_end_time)}"
+        )
+        print(
+            f"   • Cut Duration:      {boundaries.duration_formatted} ({boundaries.duration_seconds:.1f}s)"
+        )
 
     if boundaries.events:
         print("\n📜 Timeline Events:")

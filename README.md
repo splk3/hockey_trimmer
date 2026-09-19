@@ -5,22 +5,41 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An automated Python command-line utility for analyzing ice hockey game videos, detecting on-screen scoreboard overlays (period, clock, scores), and cleanly trimming the beginning and end of the recording to save space and watch time.
+An automated Python command-line utility for analyzing ice hockey game videos,
+detecting on-screen scoreboard overlays (period, clock, scores), and cleanly
+trimming the beginning and end of the recording to save space and watch time.
 
-Tuned for broadcasts and arena streaming feeds (such as **Black Bear TV**, LiveBarn, Pixellot, and standard broadcast scorebugs).
+Tuned for broadcasts and arena streaming feeds (such as **Black Bear TV**,
+LiveBarn, Pixellot, and standard broadcast scorebugs).
 
 ---
 
 ## Key Features
 
-- **Automated Game Lifecycle Detection**: Tracks scoreboard state transitions from Period 1 opening puck drop through Period 3 regulation finish (and Overtime if tied).
-- **First Complete Game Selection**: Intelligently ignores warmups and mid-game recordings from previous matches, locking onto the *first complete match* (Period 1 -> Period 2 -> Period 3 -> End).
-- **Self-Contained Digit & Period Recognition**: Includes a built-in OpenCV contour slot matcher that reads digital game clocks (`MM:SS`) and periods (`1`, `2`, `3`, `OT`) in microseconds without requiring external Tesseract binaries.
-- **Fast Lossless Stream Copy**: Defaults to `ffmpeg -c copy` snapped to adjacent keyframes—cuts multi-gigabyte video files in seconds with zero CPU re-encoding overhead and zero quality loss.
-- **Keyframe-Accurate or Frame-Accurate**: Snaps start cuts to preceding keyframes and end cuts to subsequent keyframes to guarantee no game action is missed. Supports frame-accurate re-encoding (`--reencode`).
-- **Configurable Buffers**: Adds customizable pre-game padding (default: 15s before opening puck drop) and post-game padding (default: 15s after final horn / Period 3 0:00).
-- **Dry-Run Analysis (`--check`)**: Scans video and reports timeline events, period transitions, and cut timestamps without modifying or creating files.
-- **Scoreboard Presets & Custom ROI**: Pre-configured for Black Bear TV (`blackbear`), generic corner layouts (`top_left`, `top_center`), and custom bounding box overrides via `--roi`.
+- **Automated Game Lifecycle Detection**: Tracks scoreboard state transitions
+  from Period 1 opening puck drop through Period 3 regulation finish (and
+  Overtime if tied).
+- **First Complete Game Selection**: Intelligently ignores warmups and mid-game
+  recordings from previous matches, locking onto the _first complete match_
+  (Period 1 -> Period 2 -> Period 3 -> End).
+- **Self-Contained Digit & Period Recognition**: Includes a built-in OpenCV
+  contour slot matcher that reads digital game clocks (`MM:SS`) and periods
+  (`1`, `2`, `3`, `OT`) in microseconds without requiring external Tesseract
+  binaries.
+- **Fast Lossless Stream Copy**: Defaults to `ffmpeg -c copy` snapped to
+  adjacent keyframes—cuts multi-gigabyte video files in seconds with zero CPU
+  re-encoding overhead and zero quality loss.
+- **Keyframe-Accurate or Frame-Accurate**: Snaps start cuts to preceding
+  keyframes and end cuts to subsequent keyframes to guarantee no game action is
+  missed. Supports frame-accurate re-encoding (`--reencode`).
+- **Configurable Buffers**: Adds customizable pre-game padding (default: 15s
+  before opening puck drop) and post-game padding (default: 15s after final horn
+  / Period 3 0:00).
+- **Dry-Run Analysis (`--check`)**: Scans video and reports timeline events,
+  period transitions, and cut timestamps without modifying or creating files.
+- **Scoreboard Presets & Custom ROI**: Pre-configured for Black Bear TV
+  (`blackbear`), generic corner layouts (`top_left`, `top_center`), and custom
+  bounding box overrides via `--roi`.
 
 ---
 
@@ -28,58 +47,79 @@ Tuned for broadcasts and arena streaming feeds (such as **Black Bear TV**, LiveB
 
 1. **Start of Game**:
    - The scanner searches for the appearance of the Period 1 scoreboard.
-   - Opening puck drop is locked when the Period 1 clock begins counting down from starting duration (e.g. `15:00` -> `14:59`).
-   - A 15-second pre-buffer is added so player introductions and faceoff lineups are preserved.
+   - Opening puck drop is locked when the Period 1 clock begins counting down
+     from starting duration (e.g. `15:00` -> `14:59`).
+   - A 15-second pre-buffer is added so player introductions and faceoff lineups
+     are preserved.
 2. **Regulation & Overtime**:
-   - The state machine tracks progression through Period 1, Period 2, and Period 3.
-   - **Regulation Finish**: If the score is **not tied** when the Period 3 clock reaches `00:00`, the game concludes.
-   - **Overtime**: If the score **is tied** at Period 3 `00:00`, the game continues into Overtime and ends when the OT period clock reaches `00:00` (regardless of score).
-   - **Overlay Disappearance**: If the scoreboard overlay turns off after Period 3 has been in progress, the disappearance marks the end of the game.
+   - The state machine tracks progression through Period 1, Period 2, and
+     Period 3.
+   - **Regulation Finish**: If the score is **not tied** when the Period 3 clock
+     reaches `00:00`, the game concludes.
+   - **Overtime**: If the score **is tied** at Period 3 `00:00`, the game
+     continues into Overtime and ends when the OT period clock reaches `00:00`
+     (regardless of score).
+   - **Overlay Disappearance**: If the scoreboard overlay turns off after Period
+     3 has been in progress, the disappearance marks the end of the game.
 3. **End of Game**:
-   - A 15-second post-buffer is added after the final horn so celebrations and post-game handshakes are included.
+   - A 15-second post-buffer is added after the final horn so celebrations and
+     post-game handshakes are included.
 
 ---
 
 ## Prerequisites
 
 - **Python**: 3.10 or higher
-- **FFmpeg & FFprobe**: Required for video probing, frame extraction, and video cutting.
+- **FFmpeg & FFprobe**: Required for video probing, frame extraction, and video
+  cutting.
   - **Ubuntu / Debian**:
+
     ```bash
     sudo apt-get update && sudo apt-get install -y ffmpeg
     ```
+
   - **macOS**:
+
     ```bash
     brew install ffmpeg
     ```
+
   - **Windows**:
+
     ```powershell
     winget install Gyan.FFmpeg
     ```
-- *(Optional)* **Tesseract OCR**: Only needed if you want external OCR fallback on non-standard custom scoreboard fonts (`sudo apt-get install tesseract-ocr`).
+
+- _(Optional)_ **Tesseract OCR**: Only needed if you want external OCR fallback
+  on non-standard custom scoreboard fonts
+  (`sudo apt-get install tesseract-ocr`).
 
 ---
 
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/your-username/hockey-trimmer.git
    cd hockey-trimmer
    ```
 
 2. Create and activate a Python virtual environment:
+
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
    ```
 
 3. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
    For development and running tests:
+
    ```bash
    pip install -r requirements-dev.txt
    ```
@@ -89,31 +129,46 @@ Tuned for broadcasts and arena streaming feeds (such as **Black Bear TV**, LiveB
 ## Usage Examples
 
 ### 1. Analyze / Check Video (Dry-Run)
-Scan the video and display timeline events and proposed cut timestamps without writing a file:
+
+Scan the video and display timeline events and proposed cut timestamps without
+writing a file:
+
 ```bash
 python hockey_trimmer.py -i game_raw.mp4 --check
 ```
 
 ### 2. Fast Lossless Trim (Default)
-Trim the first complete game in seconds using stream copy (scans at the default 10s interval):
+
+Trim the first complete game in seconds using stream copy (scans at the default
+10s interval):
+
 ```bash
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4
 ```
 
 ### 3. Custom Pre- and Post-Buffers
+
 Keep 10 seconds before opening puck drop and 20 seconds after final horn:
+
 ```bash
-python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --buffer-before 10 --buffer-after 20
+python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 \
+  --buffer-before 10 --buffer-after 20
 ```
 
 ### 4. Frame-Accurate Re-encode
-Re-encode with H.264 video and AAC audio for frame-exact cuts at arbitrary timestamps:
+
+Re-encode with H.264 video and AAC audio for frame-exact cuts at arbitrary
+timestamps:
+
 ```bash
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --reencode
 ```
 
 ### 5. Custom Scoreboard Region of Interest
-If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in normalized coordinates (0.0 to 1.0):
+
+If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in
+normalized coordinates (0.0 to 1.0):
+
 ```bash
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --roi 0.05,0.02,0.25,0.14
 ```
@@ -123,6 +178,7 @@ python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --roi 0.05,0.02,0.2
 ## Real-World Benchmark
 
 Tested on raw arena footage (`20260913-ducks12aa-vs-genesis-mcginty-raw.mp4`):
+
 - **Raw Video**: 2 hours 7 minutes (7,661s), 3.15 GB, 1280x720 @ 30fps.
 - **Detected Puck Drop**: `15:59` (clock begins countdown from 15:00).
 - **Detected Final Horn**: `01:22:52` (Period 3 reaches 0:00, score 2-6).
@@ -148,15 +204,23 @@ Automated ice hockey video analyzer and trimmer.
 options:
   -h, --help            show this help message and exit
   -i, --input INPUT     Path to input video file (e.g., .mp4, .mov, .mkv).
-  -o, --output OUTPUT   Path to output trimmed video file. Required unless --check is set.
-  -c, --check           Analysis mode only: report detected game boundaries and events without modifying or cutting the file.
-  --buffer-before SEC   Seconds of video to keep before the opening puck drop (default: 15.0).
-  --buffer-after SEC    Seconds of video to keep after the final horn / period 3 0:00 (default: 15.0).
+  -o, --output OUTPUT   Path to output trimmed video file. Required unless
+                        --check is set.
+  -c, --check           Analysis mode only: report detected game boundaries
+                        and events without modifying or cutting the file.
+  --buffer-before SEC   Seconds of video to keep before the opening puck
+                        drop (default: 15.0).
+  --buffer-after SEC    Seconds of video to keep after the final horn /
+                        period 3 0:00 (default: 15.0).
   --sample-interval SEC Coarse scan interval in seconds (default: 10.0).
-  --preset PRESET       Scoreboard layout preset (default: blackbear). Choices: blackbear, top_left, top_center.
-  --roi ROI             Custom scoreboard bounding box as 'x1,y1,x2,y2' normalized floats (e.g. '0.045,0.02,0.255,0.14').
+  --preset PRESET       Scoreboard layout preset (default: blackbear).
+                        Choices: blackbear, top_left, top_center.
+  --roi ROI             Custom scoreboard bounding box as
+                        'x1,y1,x2,y2' normalized floats
+                        (e.g. '0.045,0.02,0.255,0.14').
   --reencode            Re-encode video instead of fast stream copy (-c copy).
-  --no-keyframe-snap    Disable snapping cut points to adjacent keyframes when using stream copy.
+  --no-keyframe-snap    Disable snapping cut points to adjacent keyframes
+                        when using stream copy.
   -v, --verbose         Enable verbose output showing per-sample detection details.
 ```
 
@@ -165,22 +229,26 @@ options:
 ## Running Tests
 
 Run the test suite with standard library `unittest` (zero dependencies):
+
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
 Or with `pytest`:
+
 ```bash
 pytest -v
 ```
 
-All 23 unit tests cover CLI parsing, scoreboard presence detection, digit/clock parsing, period classification, game timeline state transitions, overtime logic, and keyframe snapping.
+All 23 unit tests cover CLI parsing, scoreboard presence detection, digit/clock
+parsing, period classification, game timeline state transitions, overtime logic,
+and keyframe snapping.
 
 ---
 
 ## Repository Structure
 
-```
+```text
 hockey-trimmer/
 ├── hockey_trimmer/
 │   ├── __init__.py         # Package entrypoint and exports
@@ -196,7 +264,8 @@ hockey-trimmer/
 │   ├── test_ocr.py         # Tests for clock, period, and score parsing
 │   ├── test_timeline.py    # Tests for regulation, OT, and multi-game logic
 │   ├── test_trimmer.py     # Tests for video probing and keyframe snapping
-│   └── generate_fixtures.py# Synthetic test frame generator for CI
+│   └── generate_fixtures.py
+│                           # Synthetic test frame generator for CI
 ├── .github/
 │   ├── dependabot.yml      # Dependabot configuration for pip & actions
 │   └── workflows/
@@ -214,4 +283,5 @@ hockey-trimmer/
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
+for details.
