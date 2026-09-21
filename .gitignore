@@ -90,3 +90,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Temporary space for test video storage
+/temp_videos/
