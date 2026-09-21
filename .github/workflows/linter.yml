@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Super-Linter
-        uses: super-linter/super-linter@729e0f967409dceb0a898cdd94a5534719f85c36 # v8
+        uses: super-linter/super-linter@4ce20838b8ab83717e78138c5b3a1407148e0918 # v8
         env:
           DEFAULT_BRANCH: main
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
