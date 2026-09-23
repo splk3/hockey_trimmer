@@ -44,6 +44,33 @@ class TestScoreboardDetector(unittest.TestCase):
         self.assertTrue(reading.present)
         self.assertEqual(reading.timestamp, 42.0)
 
+    def test_custom_subregion_overrides(self):
+        detector = ScoreboardDetector(
+            preset="blackbear",
+            custom_roi=(0.0, 0.0, 0.5, 0.5),
+            clock_roi=(0.1, 0.2, 0.3, 0.4),
+            period_roi=(0.2, 0.3, 0.4, 0.5),
+            score_roi=(0.3, 0.4, 0.5, 0.6),
+            scan_scoreboard=False,
+        )
+        self.assertEqual(detector.preset.full_roi, (0.0, 0.0, 0.5, 0.5))
+        self.assertEqual(detector.preset.clock_roi, (0.1, 0.2, 0.3, 0.4))
+        self.assertEqual(detector.preset.period_roi, (0.2, 0.3, 0.4, 0.5))
+        self.assertEqual(detector.preset.score_roi, (0.3, 0.4, 0.5, 0.6))
+
+    def test_candidate_scanning_finds_moved_scoreboard(self):
+        frame = Image.new("RGB", (1280, 720), color=(180, 180, 180))
+        draw = ImageDraw.Draw(frame)
+        draw.rectangle([896, 14, 1254, 158], fill=(10, 10, 10))
+        draw.rectangle([930, 35, 1120, 90], fill=(255, 255, 255))
+        draw.rectangle([1120, 35, 1230, 90], fill=(255, 255, 255))
+
+        detector = ScoreboardDetector(preset="top_left")
+        is_present, conf = detector.check_presence(frame)
+        self.assertTrue(is_present)
+        self.assertGreater(conf, 0.0)
+        self.assertEqual(detector.active_full_roi, (0.70, 0.02, 0.98, 0.22))
+
 
 if __name__ == "__main__":
     unittest.main()

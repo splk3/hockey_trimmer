@@ -92,4 +92,4 @@ Thumbs.db
 *~
 
 # Temporary space for test video storage
-/temp_videos/
+temp_videos/

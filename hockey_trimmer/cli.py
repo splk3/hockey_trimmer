@@ -9,6 +9,12 @@ import time
 from typing import Optional
 
 from .detector import ScoreboardDetector
+from .presets import (
+    PresetError,
+    load_preset,
+    parse_roi_string,
+    save_preset,
+)
 from .timeline import GameTimelineTracker, GameBoundaries
 from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
 
@@ -30,7 +36,12 @@ def analyze_video(
     buffer_after: float = 15.0,
     sample_interval: float = 10.0,
     preset: str = "blackbear",
+    preset_file: Optional[str] = None,
     custom_roi: Optional[tuple] = None,
+    clock_roi: Optional[tuple] = None,
+    period_roi: Optional[tuple] = None,
+    score_roi: Optional[tuple] = None,
+    scan_scoreboard: bool = True,
     verbose: bool = False,
     fine_refine: bool = True,
 ) -> GameBoundaries:
@@ -49,12 +60,21 @@ def analyze_video(
         f"{format_seconds(duration)} ({duration:.1f}s) | "
         f"Resolution: {video_info.width}x{video_info.height}"
     )
-    print(f"   Preset: '{preset}' | Sample interval: {sample_interval:.1f}s")
+    preset_label = preset_file or preset
+    print(f"   Preset: '{preset_label}' | Sample interval: {sample_interval:.1f}s")
     print(
         f"   Buffers: {buffer_before:.1f}s before puck drop, {buffer_after:.1f}s after final horn"
     )
 
-    detector = ScoreboardDetector(preset=preset, custom_roi=custom_roi)
+    detector = ScoreboardDetector(
+        preset=preset,
+        preset_file=preset_file,
+        custom_roi=custom_roi,
+        clock_roi=clock_roi,
+        period_roi=period_roi,
+        score_roi=score_roi,
+        scan_scoreboard=scan_scoreboard,
+    )
     timeline = GameTimelineTracker(
         buffer_before=buffer_before,
         buffer_after=buffer_after,
@@ -149,6 +169,69 @@ def analyze_video(
     return boundaries
 
 
+def parse_cli_roi(value: Optional[str], option_name: str) -> Optional[tuple]:
+    """Parse a CLI ROI option, returning None when the option was omitted."""
+    if value is None:
+        return None
+    return parse_roi_string(value, option_name)
+
+
+def calibrate_preset(
+    video_path: str,
+    output_path: str,
+    timestamp: float = 0.0,
+    preset: str = "blackbear",
+    preset_file: Optional[str] = None,
+) -> None:
+    """
+    Interactively collect scoreboard ROIs from a sample frame and save a preset.
+    """
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Input video file not found: {video_path}")
+
+    frame = extract_frame_at_timestamp(video_path, timestamp)
+    if frame is None:
+        raise RuntimeError(f"Could not extract calibration frame at {timestamp:.1f}s.")
+
+    preview_path = os.path.splitext(output_path)[0] + "-calibration-frame.jpg"
+    frame.save(preview_path)
+    print(f"Saved calibration frame: {preview_path}")
+    print(
+        "Enter normalized ROIs as x1,y1,x2,y2. The full scoreboard ROI is "
+        "relative to the whole frame; clock/period/score ROIs are relative to "
+        "the full scoreboard box."
+    )
+
+    base = load_preset(preset, preset_file)
+    full_roi = parse_roi_string(
+        input(f"Full scoreboard ROI [{base.full_roi}]: ")
+        or ",".join(map(str, base.full_roi)),
+        "full ROI",
+    )
+    clock_roi = parse_roi_string(
+        input(f"Clock ROI [{base.clock_roi}]: ") or ",".join(map(str, base.clock_roi)),
+        "clock ROI",
+    )
+    period_roi = parse_roi_string(
+        input(f"Period ROI [{base.period_roi}]: ")
+        or ",".join(map(str, base.period_roi)),
+        "period ROI",
+    )
+    score_roi = parse_roi_string(
+        input(f"Score ROI [{base.score_roi}]: ") or ",".join(map(str, base.score_roi)),
+        "score ROI",
+    )
+
+    base.name = os.path.splitext(os.path.basename(output_path))[0]
+    base.full_roi = full_roi
+    base.clock_roi = clock_roi
+    base.period_roi = period_roi
+    base.score_roi = score_roi
+    base.candidate_rois = [full_roi]
+    save_preset(base, output_path)
+    print(f"Saved calibrated preset: {output_path}")
+
+
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="hockey_trimmer",
@@ -203,15 +286,53 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--preset",
-        choices=["blackbear", "top_left", "top_center"],
         default="blackbear",
         help="Scoreboard layout preset (default: blackbear).",
+    )
+    parser.add_argument(
+        "--preset-file",
+        default=None,
+        help="Path to a custom JSON/YAML scoreboard preset file.",
     )
     parser.add_argument(
         "--roi",
         type=str,
         default=None,
         help="Custom scoreboard bounding box as 'x1,y1,x2,y2' normalized floats (e.g. '0.04,0.02,0.25,0.20').",
+    )
+    parser.add_argument(
+        "--clock-roi",
+        type=str,
+        default=None,
+        help="Custom clock subregion within the scoreboard ROI as 'x1,y1,x2,y2'.",
+    )
+    parser.add_argument(
+        "--period-roi",
+        type=str,
+        default=None,
+        help="Custom period subregion within the scoreboard ROI as 'x1,y1,x2,y2'.",
+    )
+    parser.add_argument(
+        "--score-roi",
+        type=str,
+        default=None,
+        help="Custom score subregion within the scoreboard ROI as 'x1,y1,x2,y2'.",
+    )
+    parser.add_argument(
+        "--force-preset-roi",
+        action="store_true",
+        help="Disable candidate scanning and use only the configured scoreboard ROI.",
+    )
+    parser.add_argument(
+        "--calibrate-preset",
+        default=None,
+        help="Interactively create a JSON/YAML preset file from a sample frame.",
+    )
+    parser.add_argument(
+        "--calibrate-timestamp",
+        type=float,
+        default=0.0,
+        help="Timestamp in seconds for the calibration frame (default: 0.0).",
     )
     parser.add_argument(
         "--reencode",
@@ -236,6 +357,20 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
 def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
 
+    if args.calibrate_preset:
+        try:
+            calibrate_preset(
+                video_path=args.input,
+                output_path=args.calibrate_preset,
+                timestamp=args.calibrate_timestamp,
+                preset=args.preset,
+                preset_file=args.preset_file,
+            )
+            return 0
+        except Exception as exc:
+            print(f"❌ Error calibrating preset: {exc}", file=sys.stderr)
+            return 1
+
     if not args.check and not args.output:
         print(
             "❌ Error: -o / --output must be specified unless --check is used.",
@@ -243,20 +378,14 @@ def main(argv: Optional[list] = None) -> int:
         )
         return 1
 
-    custom_roi = None
-    if args.roi:
-        try:
-            parts = [float(p.strip()) for p in args.roi.split(",")]
-            if len(parts) == 4:
-                custom_roi = tuple(parts)
-            else:
-                raise ValueError()
-        except ValueError:
-            print(
-                "❌ Error: --roi must be 4 comma-separated numbers: 'x1,y1,x2,y2'",
-                file=sys.stderr,
-            )
-            return 1
+    try:
+        custom_roi = parse_cli_roi(args.roi, "--roi")
+        clock_roi = parse_cli_roi(args.clock_roi, "--clock-roi")
+        period_roi = parse_cli_roi(args.period_roi, "--period-roi")
+        score_roi = parse_cli_roi(args.score_roi, "--score-roi")
+    except PresetError as exc:
+        print(f"❌ Error: {exc}", file=sys.stderr)
+        return 1
 
     try:
         boundaries = analyze_video(
@@ -265,7 +394,12 @@ def main(argv: Optional[list] = None) -> int:
             buffer_after=args.buffer_after,
             sample_interval=args.sample_interval,
             preset=args.preset,
+            preset_file=args.preset_file,
             custom_roi=custom_roi,
+            clock_roi=clock_roi,
+            period_roi=period_roi,
+            score_roi=score_roi,
+            scan_scoreboard=not args.force_preset_roi,
             verbose=args.verbose,
         )
     except Exception as exc:

@@ -37,9 +37,10 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
   / Period 3 0:00).
 - **Dry-Run Analysis (`--check`)**: Scans video and reports timeline events,
   period transitions, and cut timestamps without modifying or creating files.
-- **Scoreboard Presets & Custom ROI**: Pre-configured for Black Bear TV
-  (`blackbear`), generic corner layouts (`top_left`, `top_center`), and custom
-  bounding box overrides via `--roi`.
+- **Flexible Scoreboard Presets & Calibration**: Pre-configured for Black Bear
+  TV (`blackbear`) and generic layouts (`top_left`, `top_center`), with JSON/YAML
+  preset files, outer and subregion ROI overrides, default-on candidate
+  scoreboard scanning, and interactive preset calibration.
 
 ---
 
@@ -167,10 +168,74 @@ python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --reencode
 ### 5. Custom Scoreboard Region of Interest
 
 If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in
-normalized coordinates (0.0 to 1.0):
+normalized coordinates (0.0 to 1.0). Subregions are relative to the scoreboard
+box, so you can also override the internal clock, period, and score boxes:
 
 ```bash
-python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --roi 0.05,0.02,0.25,0.14
+python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 \
+  --roi 0.05,0.02,0.25,0.14 \
+  --clock-roi 0.29,0.56,0.70,0.90 \
+  --period-roi 0.34,0.02,0.65,0.22 \
+  --score-roi 0.30,0.20,0.70,0.58
+```
+
+By default, the detector scans common scoreboard locations and uses the
+highest-confidence candidate. To force only the configured preset/ROI location:
+
+```bash
+python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --force-preset-roi
+```
+
+### 6. Custom JSON/YAML Preset Files
+
+Preset files let each overlay define where to look and how to detect/read the
+scorebug without editing Python code:
+
+```bash
+python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 \
+  --preset-file my-scoreboard.yaml
+```
+
+Example preset:
+
+```yaml
+name: my-scoreboard
+layout:
+  full_roi: [0.02, 0.02, 0.30, 0.22]
+  period_roi: [0.30, 0.00, 0.70, 0.25]
+  clock_roi: [0.25, 0.50, 0.75, 0.90]
+  score_roi: [0.25, 0.20, 0.75, 0.55]
+detection:
+  mode: generic
+  white_threshold: 220
+  white_min_ratio: 0.10
+  edge_threshold: 80
+  edge_min_ratio: 0.05
+ocr:
+  clock_invert_if_dark: false
+  period_invert_if_dark: true
+  score_invert_if_dark: true
+  clock_slot_centers: [35, 45, 61, 71]
+  clock_slot_tolerance: 8
+candidate_rois:
+  - [0.02, 0.02, 0.30, 0.22]
+  - [0.35, 0.02, 0.65, 0.18]
+  - [0.70, 0.02, 0.98, 0.22]
+```
+
+ROI values can be normalized floats (`0.0` to `1.0`) or absolute pixels. The
+`full_roi` and `candidate_rois` are relative to the video frame; `period_roi`,
+`clock_roi`, and `score_roi` are relative to the selected full scoreboard ROI.
+
+### 7. Interactive Preset Calibration
+
+Calibration extracts a sample frame, saves it next to the requested preset, and
+prompts for the full scoreboard, clock, period, and score ROIs:
+
+```bash
+python hockey_trimmer.py -i game_raw.mp4 \
+  --calibrate-preset my-scoreboard.yaml \
+  --calibrate-timestamp 120
 ```
 
 ---
@@ -196,7 +261,11 @@ usage: hockey_trimmer [-h] -i INPUT [-o OUTPUT] [-c]
                       [--buffer-before BUFFER_BEFORE]
                       [--buffer-after BUFFER_AFTER]
                       [--sample-interval SAMPLE_INTERVAL]
-                      [--preset {blackbear,top_left,top_center}] [--roi ROI]
+                      [--preset PRESET] [--preset-file PRESET_FILE]
+                      [--roi ROI] [--clock-roi ROI] [--period-roi ROI]
+                      [--score-roi ROI] [--force-preset-roi]
+                      [--calibrate-preset PATH]
+                      [--calibrate-timestamp SEC]
                       [--reencode] [--no-keyframe-snap] [-v]
 
 Automated ice hockey video analyzer and trimmer.
@@ -213,11 +282,24 @@ options:
   --buffer-after SEC    Seconds of video to keep after the final horn /
                         period 3 0:00 (default: 15.0).
   --sample-interval SEC Coarse scan interval in seconds (default: 10.0).
-  --preset PRESET       Scoreboard layout preset (default: blackbear).
-                        Choices: blackbear, top_left, top_center.
+  --preset PRESET       Built-in scoreboard layout preset (default:
+                        blackbear). Built-ins: blackbear, top_left,
+                        top_center.
+  --preset-file PATH    Custom JSON/YAML scoreboard preset file.
   --roi ROI             Custom scoreboard bounding box as
                         'x1,y1,x2,y2' normalized floats
                         (e.g. '0.045,0.02,0.255,0.14').
+  --clock-roi ROI       Custom clock subregion within the scoreboard ROI.
+  --period-roi ROI      Custom period subregion within the scoreboard ROI.
+  --score-roi ROI       Custom score subregion within the scoreboard ROI.
+  --force-preset-roi    Disable candidate scanning and use only the configured
+                        scoreboard ROI.
+  --calibrate-preset PATH
+                        Interactively create a JSON/YAML preset file from a
+                        sample frame.
+  --calibrate-timestamp SEC
+                        Timestamp in seconds for the calibration frame
+                        (default: 0.0).
   --reencode            Re-encode video instead of fast stream copy (-c copy).
   --no-keyframe-snap    Disable snapping cut points to adjacent keyframes
                         when using stream copy.

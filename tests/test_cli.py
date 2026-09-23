@@ -52,11 +52,33 @@ class TestCLI(unittest.TestCase):
                 "out.mp4",
                 "--roi",
                 "0.05,0.05,0.30,0.25",
+                "--clock-roi",
+                "0.20,0.50,0.80,0.80",
+                "--preset-file",
+                "custom.yaml",
+                "--force-preset-roi",
                 "--reencode",
             ]
         )
         self.assertEqual(args.roi, "0.05,0.05,0.30,0.25")
+        self.assertEqual(args.clock_roi, "0.20,0.50,0.80,0.80")
+        self.assertEqual(args.preset_file, "custom.yaml")
+        self.assertTrue(args.force_preset_roi)
         self.assertTrue(args.reencode)
+
+    def test_parse_args_calibration(self):
+        args = parse_args(
+            [
+                "-i",
+                "game.mp4",
+                "--calibrate-preset",
+                "preset.json",
+                "--calibrate-timestamp",
+                "12.5",
+            ]
+        )
+        self.assertEqual(args.calibrate_preset, "preset.json")
+        self.assertEqual(args.calibrate_timestamp, 12.5)
 
     def test_main_missing_output_without_check(self):
         buf = io.StringIO()
@@ -71,6 +93,22 @@ class TestCLI(unittest.TestCase):
             ret = main(["-i", "game.mp4", "-o", "out.mp4", "--roi", "invalid,roi"])
         self.assertEqual(ret, 1)
         self.assertIn("--roi must be 4 comma-separated numbers", buf.getvalue())
+
+    def test_main_invalid_sub_roi(self):
+        buf = io.StringIO()
+        with patch("sys.stderr", buf):
+            ret = main(
+                [
+                    "-i",
+                    "game.mp4",
+                    "-o",
+                    "out.mp4",
+                    "--clock-roi",
+                    "0.3,0.3,0.1,0.2",
+                ]
+            )
+        self.assertEqual(ret, 1)
+        self.assertIn("--clock-roi", buf.getvalue())
 
 
 if __name__ == "__main__":

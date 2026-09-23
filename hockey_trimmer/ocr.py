@@ -4,7 +4,7 @@ OCR, template matching, and text parsing utilities for scoreboard clocks, period
 
 import os
 import re
-from typing import Optional, Tuple, Dict
+from typing import Any, Optional, Tuple, Dict
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -172,7 +172,12 @@ class BuiltinDigitMatcher:
                 arr = cv2.resize(np.array(img), (8, 10), interpolation=cv2.INTER_AREA)
                 self.period_templates[p] = arr.astype(float) / 255.0
 
-    def match_clock(self, clock_crop: Image.Image) -> Optional[float]:
+    def match_clock(
+        self,
+        clock_crop: Image.Image,
+        slot_centers: Optional[list] = None,
+        slot_tolerance: int = 8,
+    ) -> Optional[float]:
         """
         Recognize MM:SS from clock box crop using contour isolation and template correlation.
         """
@@ -201,11 +206,11 @@ class BuiltinDigitMatcher:
             return None
 
         # Standard clock slot target centers: D1 (~35), D2 (~45), D3 (~61), D4 (~71)
+        target_centers = slot_centers or [35, 45, 61, 71]
         chosen_boxes = []
-        for target_x in [35, 45, 61, 71]:
+        for target_x in target_centers:
             best_b = min(boxes, key=lambda b: abs((b[0] + b[2] / 2) - target_x))
-            # Validate box is within reasonable distance of slot (max 8px deviation)
-            if abs((best_b[0] + best_b[2] / 2) - target_x) <= 8:
+            if abs((best_b[0] + best_b[2] / 2) - target_x) <= slot_tolerance:
                 chosen_boxes.append(best_b)
             else:
                 return None
@@ -287,7 +292,7 @@ class BuiltinDigitMatcher:
         if binary[5, 5] == 1 or binary[6, 5] == 1:
             return 3
 
-        return 1
+        return None
 
 
 class ScoreboardOCR:
@@ -296,9 +301,14 @@ class ScoreboardOCR:
     Supports both Tesseract OCR and BuiltinDigitMatcher fallback.
     """
 
-    def __init__(self, tesseract_cmd: Optional[str] = None):
+    def __init__(
+        self,
+        tesseract_cmd: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ):
         self.has_tesseract = HAS_PYTESSERACT
         self.matcher = BuiltinDigitMatcher() if HAS_CV2 else None
+        self.config = config or {}
 
         if tesseract_cmd and HAS_PYTESSERACT:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
@@ -362,14 +372,22 @@ class ScoreboardOCR:
         """Read the game clock from an image crop."""
         # Try built-in fast template matcher first
         if self.matcher is not None:
-            val = self.matcher.match_clock(clock_crop)
+            val = self.matcher.match_clock(
+                clock_crop,
+                slot_centers=self.config.get("clock_slot_centers"),
+                slot_tolerance=int(self.config.get("clock_slot_tolerance", 8)),
+            )
             if val is not None:
                 return val
 
         if not self.has_tesseract_bin:
             return None
 
-        prep = self.preprocess_image(clock_crop, invert_if_dark=False, scale=3)
+        prep = self.preprocess_image(
+            clock_crop,
+            invert_if_dark=bool(self.config.get("clock_invert_if_dark", False)),
+            scale=int(self.config.get("clock_scale", 3)),
+        )
         raw_text = self.read_text(prep, whitelist="0123456789:.", psm=7)
         clock_sec = parse_clock_string(raw_text)
         if clock_sec is not None:
@@ -391,7 +409,11 @@ class ScoreboardOCR:
         if not self.has_tesseract_bin:
             return None
 
-        prep = self.preprocess_image(period_crop, invert_if_dark=True, scale=3)
+        prep = self.preprocess_image(
+            period_crop,
+            invert_if_dark=bool(self.config.get("period_invert_if_dark", True)),
+            scale=int(self.config.get("period_scale", 3)),
+        )
         raw_text = self.read_text(prep, whitelist="1234OT", psm=10)
         period = parse_period_string(raw_text)
         if period is not None:
@@ -404,6 +426,10 @@ class ScoreboardOCR:
         """Read score (home, away) from an image crop."""
         if not self.has_tesseract_bin:
             return None
-        prep = self.preprocess_image(score_crop, invert_if_dark=True, scale=3)
+        prep = self.preprocess_image(
+            score_crop,
+            invert_if_dark=bool(self.config.get("score_invert_if_dark", True)),
+            scale=int(self.config.get("score_scale", 3)),
+        )
         raw_text = self.read_text(prep, whitelist="0123456789-:", psm=7)
         return parse_score_string(raw_text)

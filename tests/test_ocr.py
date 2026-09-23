@@ -2,8 +2,13 @@
 Tests for OCR parsing functions and ScoreboardOCR.
 """
 
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+import numpy as np
+from PIL import Image
 from hockey_trimmer.ocr import (
+    BuiltinDigitMatcher,
     parse_clock_string,
     parse_period_string,
     parse_score_string,
@@ -68,6 +73,22 @@ class TestOCR(unittest.TestCase):
     def test_scoreboard_ocr_instance(self):
         ocr = ScoreboardOCR()
         self.assertTrue(hasattr(ocr, "has_tesseract"))
+
+    def test_period_matcher_returns_none_for_unmatched_glyph(self):
+        fake_cv2 = SimpleNamespace(
+            RETR_EXTERNAL=0,
+            CHAIN_APPROX_SIMPLE=0,
+            INTER_AREA=0,
+            findContours=lambda *args, **kwargs: ([object()], None),
+            boundingRect=lambda contour: (0, 0, 8, 8),
+            resize=lambda *args, **kwargs: np.zeros((8, 6), dtype=np.uint8),
+        )
+        with patch("hockey_trimmer.ocr.HAS_CV2", True), patch(
+            "hockey_trimmer.ocr.cv2", fake_cv2, create=True
+        ):
+            matcher = BuiltinDigitMatcher()
+            crop = Image.new("RGB", (20, 20), color=(0, 0, 255))
+            self.assertIsNone(matcher.match_period(crop))
 
 
 if __name__ == "__main__":
