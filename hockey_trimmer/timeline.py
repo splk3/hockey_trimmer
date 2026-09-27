@@ -302,7 +302,7 @@ class GameTimelineTracker:
         raw_clock = reading.clock_seconds if reading.present else None
 
         if raw_clock is not None:
-            if raw_clock > self.max_resume_clock:
+            if raw_clock > self.max_resume_clock and reading.period == 1:
                 # A full period clock means the feed moved on to another game.
                 self.pending_resume_streak = 0
                 self.pending_newgame_streak += 1

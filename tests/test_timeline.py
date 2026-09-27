@@ -473,6 +473,37 @@ class TestEndOfGameConfirmation(unittest.TestCase):
         self.assertTrue(is_done)
         self.assertEqual(tracker.final_horn_time, 3030.0)
 
+    def test_high_clock_in_period3_cancels_pending_end(self):
+        """High resumed clocks outside Period 1 should cancel pending end."""
+        tracker = GameTimelineTracker(video_duration=6000.0)
+        self._advance_to_p3(tracker, p3_clock=30.0, p3_time=3000.0)
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True, timestamp=3030.0, period=3, clock_seconds=0.0
+            )
+        )
+        self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True, timestamp=3040.0, period=3, clock_seconds=600.0
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True, timestamp=3050.0, period=3, clock_seconds=600.0
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.P3_RUNNING)
+        self.assertIsNone(tracker.final_horn_time)
+        self.assertEqual(tracker.false_end_count, 1)
+
     def test_implausible_clock_drop_is_rejected_then_resyncs(self):
         """Isolated misreads are dropped, but a sustained new value re-syncs."""
         tracker = GameTimelineTracker(video_duration=6000.0)
