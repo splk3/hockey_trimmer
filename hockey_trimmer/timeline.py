@@ -16,7 +16,16 @@ class GameState(Enum):
     INTERMISSION_2 = auto()  # Between P2 and P3
     P3_RUNNING = auto()  # Period 3 actively in progress
     OT_RUNNING = auto()  # Overtime in progress (if tied)
+    PENDING_GAME_END = auto()  # Candidate final horn seen, awaiting confirmation
     GAME_COMPLETE = auto()  # First complete game fully concluded
+
+
+def format_clock(seconds: Optional[float]) -> str:
+    """Format a clock value in seconds as M:SS ('--:--' when unknown)."""
+    if seconds is None:
+        return "--:--"
+    total_sec = int(seconds)
+    return f"{total_sec // 60}:{total_sec % 60:02d}"
 
 
 @dataclass
@@ -68,15 +77,34 @@ class GameTimelineTracker:
     Tracks scoreboard readings across frames and identifies the first complete game.
     """
 
+    # A clock at or below this value is considered "expired" (0:00).
+    CLOCK_END_THRESHOLD = 2.0
+    # Slack allowed when validating how fast the clock may drop between samples.
+    CLOCK_DELTA_TOLERANCE = 3.0
+    # Extra proportional slack for sparse samples (timestamp/rounding jitter).
+    CLOCK_DELTA_TOLERANCE_RATIO = 0.05
+    # After this many consecutive implausible readings, re-sync on the newest value.
+    MAX_IMPLAUSIBLE_STREAK = 3
+    # Consecutive readings required to treat a pending end as false / as a new game.
+    RESUME_CONFIRM_COUNT = 2
+
     def __init__(
         self,
         buffer_before: float = 15.0,
         buffer_after: float = 15.0,
         video_duration: float = float("inf"),
+        end_confirm_window: float = 150.0,
+        end_confirm_interval: float = 10.0,
+        enable_end_confirm: bool = True,
+        max_resume_clock: float = 300.0,
     ):
         self.buffer_before = buffer_before
         self.buffer_after = buffer_after
         self.video_duration = video_duration
+        self.end_confirm_window = end_confirm_window
+        self.end_confirm_interval = end_confirm_interval
+        self.enable_end_confirm = enable_end_confirm
+        self.max_resume_clock = max_resume_clock
 
         self.state = GameState.SEARCHING_START
         self.events: List[TimelineEvent] = []
@@ -90,6 +118,21 @@ class GameTimelineTracker:
         self.last_score: Optional[Tuple[int, int]] = None
         self.last_seen_scoreboard_time: Optional[float] = None
         self.final_horn_time: Optional[float] = None
+
+        # Clock plausibility tracking
+        self.last_accepted_clock: Optional[float] = None
+        self.last_accepted_clock_time: Optional[float] = None
+        self.last_accepted_period: Optional[int] = None
+        self.implausible_streak = 0
+        self.rejected_clock_count = 0
+
+        # Pending (unconfirmed) end-of-game tracking
+        self.pending_end_time: Optional[float] = None
+        self.pending_end_started_at: Optional[float] = None
+        self.pending_end_prev_state: Optional[GameState] = None
+        self.pending_resume_streak = 0
+        self.pending_newgame_streak = 0
+        self.false_end_count = 0
 
         # Flags for complete game requirements
         self.p1_observed = False
@@ -109,6 +152,198 @@ class GameTimelineTracker:
         )
         self.events.append(event)
 
+    # -----------------------------------------------------------------
+    # Clock plausibility filtering
+    # -----------------------------------------------------------------
+    def _accept_clock(self, reading: ScoreboardReading) -> Optional[float]:
+        """
+        Validate a raw OCR clock value against the previously accepted one.
+
+        A game clock can never count down faster than real elapsed time, and it
+        never counts up inside a period. Readings violating that are treated as
+        OCR misreads and their clock value is dropped. After several consecutive
+        rejections the tracker re-syncs on the newest value so legitimate resets
+        (new period, new game, clock corrections) are not ignored forever.
+        """
+        clock = reading.clock_seconds
+        if clock is None:
+            return None
+
+        ts = reading.timestamp
+        period = reading.period
+
+        baseline_known = (
+            self.last_accepted_clock is not None
+            and self.last_accepted_clock_time is not None
+        )
+        period_changed = (
+            period is not None
+            and self.last_accepted_period is not None
+            and period != self.last_accepted_period
+        )
+
+        if baseline_known and not period_changed:
+            elapsed = ts - self.last_accepted_clock_time
+            delta = self.last_accepted_clock - clock
+            tolerance = max(
+                self.CLOCK_DELTA_TOLERANCE, elapsed * self.CLOCK_DELTA_TOLERANCE_RATIO
+            )
+            too_fast = delta > elapsed + tolerance
+            counted_up = -delta > tolerance
+            if elapsed >= 0 and (too_fast or counted_up):
+                self.implausible_streak += 1
+                if self.implausible_streak < self.MAX_IMPLAUSIBLE_STREAK:
+                    self.rejected_clock_count += 1
+                    return None
+
+        self.implausible_streak = 0
+        self.last_accepted_clock = clock
+        self.last_accepted_clock_time = ts
+        if period is not None:
+            self.last_accepted_period = period
+        return clock
+
+    # -----------------------------------------------------------------
+    # Pending end-of-game handling
+    # -----------------------------------------------------------------
+    def _begin_pending_end(
+        self,
+        ts: float,
+        horn_time: float,
+        description: str,
+        reading: Optional[ScoreboardReading] = None,
+    ) -> bool:
+        """
+        Register a candidate final horn. Unless confirmation is disabled, the
+        game is not considered over until the clock has been observed not to
+        resume for `end_confirm_window` seconds.
+        """
+        if not self.enable_end_confirm:
+            self.final_horn_time = horn_time
+            self.add_event(ts, f"{description} Game complete!", reading)
+            self.state = GameState.GAME_COMPLETE
+            return True
+
+        self.pending_end_time = horn_time
+        self.pending_end_started_at = ts
+        self.pending_end_prev_state = self.state
+        self.pending_resume_streak = 0
+        self.pending_newgame_streak = 0
+        self.state = GameState.PENDING_GAME_END
+        self.add_event(
+            ts,
+            f"{description} Confirming the clock stays at 0:00 for the next "
+            f"{int(self.end_confirm_window)}s before ending the game...",
+            reading,
+        )
+        return False
+
+    def _confirm_pending_end(
+        self,
+        ts: float,
+        why: str,
+        reading: Optional[ScoreboardReading] = None,
+    ) -> bool:
+        horn = self.pending_end_time if self.pending_end_time is not None else ts
+        self.final_horn_time = horn
+        self.state = GameState.GAME_COMPLETE
+        event = TimelineEvent(timestamp=horn, description="", reading=reading)
+        self.add_event(
+            ts,
+            f"Final horn confirmed at {event.timestamp_formatted} ({why}). "
+            "Game complete!",
+            reading,
+        )
+        return True
+
+    def _cancel_pending_end(
+        self,
+        ts: float,
+        clock: Optional[float],
+        reading: Optional[ScoreboardReading] = None,
+    ) -> None:
+        pending = self.pending_end_time
+        prev_state = self.pending_end_prev_state or GameState.P3_RUNNING
+        pending_event = TimelineEvent(timestamp=pending or ts, description="")
+        self.false_end_count += 1
+        self.add_event(
+            ts,
+            f"False game end at {pending_event.timestamp_formatted}: clock resumed "
+            f"at {format_clock(clock)}. Continuing to scan for the real final horn.",
+            reading,
+        )
+        self.state = prev_state
+        self.pending_end_time = None
+        self.pending_end_started_at = None
+        self.pending_end_prev_state = None
+        self.pending_resume_streak = 0
+        self.pending_newgame_streak = 0
+
+        # Re-baseline the plausibility filter on the resumed clock, otherwise
+        # every later reading looks like an upward jump from 0:00.
+        if clock is not None:
+            self.last_accepted_clock = clock
+            self.last_accepted_clock_time = ts
+            self.last_clock = clock
+            self.implausible_streak = 0
+            if reading is not None and reading.period is not None:
+                self.last_accepted_period = reading.period
+
+    def _process_pending_end(self, reading: ScoreboardReading) -> bool:
+        """
+        Handle a reading while a candidate final horn awaits confirmation.
+
+        Raw OCR clock values are used here on purpose: once the pending clock is
+        0:00 every resumed clock looks like an implausible upward jump, so the
+        plausibility filter cannot help. Instead, several consecutive readings
+        are required before a pending end is cancelled or reassigned.
+        """
+        ts = reading.timestamp
+        raw_clock = reading.clock_seconds if reading.present else None
+
+        if raw_clock is not None:
+            if raw_clock > self.max_resume_clock:
+                # A full period clock means the feed moved on to another game.
+                self.pending_resume_streak = 0
+                self.pending_newgame_streak += 1
+                if self.pending_newgame_streak >= self.RESUME_CONFIRM_COUNT:
+                    return self._confirm_pending_end(
+                        ts, "a new game's clock appeared", reading
+                    )
+            elif raw_clock > self.CLOCK_END_THRESHOLD:
+                self.pending_newgame_streak = 0
+                self.pending_resume_streak += 1
+                if self.pending_resume_streak >= self.RESUME_CONFIRM_COUNT:
+                    self._cancel_pending_end(ts, raw_clock, reading)
+                    return False
+            else:
+                self.pending_resume_streak = 0
+                self.pending_newgame_streak = 0
+
+        started = (
+            self.pending_end_started_at
+            if self.pending_end_started_at is not None
+            else ts
+        )
+        if ts - started >= self.end_confirm_window:
+            return self._confirm_pending_end(
+                ts,
+                f"clock stayed at 0:00 for {int(ts - started)}s",
+                reading,
+            )
+        return False
+
+    def finalize(self) -> bool:
+        """
+        Resolve any unconfirmed end of game once no further readings are
+        available (e.g. the video ended shortly after the final horn).
+        Returns True if a complete game has been identified.
+        """
+        if self.state == GameState.PENDING_GAME_END:
+            ts = self.last_seen_scoreboard_time or self.pending_end_time or 0.0
+            self._confirm_pending_end(ts, "no further footage to check")
+        return self.state == GameState.GAME_COMPLETE
+
     def process_reading(self, reading: ScoreboardReading) -> bool:
         """
         Process a single scoreboard reading.
@@ -118,6 +353,18 @@ class GameTimelineTracker:
             return True
 
         ts = reading.timestamp
+        clock = self._accept_clock(reading) if reading.present else None
+
+        if self.state == GameState.PENDING_GAME_END:
+            if reading.present:
+                self.last_seen_scoreboard_time = ts
+                if reading.score:
+                    self.last_score = reading.score
+                if clock is not None:
+                    self.last_clock = clock
+                if reading.period is not None:
+                    self.last_period = reading.period
+            return self._process_pending_end(reading)
 
         # Check if overlay disappeared after Period 3 (or OT)
         if not reading.present:
@@ -125,22 +372,19 @@ class GameTimelineTracker:
                 # If scoreboard disappears after Period 3 has been running
                 # and clock was low or already at/near end
                 if self.last_clock is not None and self.last_clock <= 120.0:
-                    self.final_horn_time = self.last_seen_scoreboard_time or ts
-                    self.add_event(
+                    horn = self.last_seen_scoreboard_time or ts
+                    return self._begin_pending_end(
                         ts,
+                        horn,
                         "Scoreboard disappeared after Period 3 "
-                        f"(final clock ~{int(self.last_clock)}s). "
-                        "Game end assumed.",
+                        f"(final clock ~{int(self.last_clock)}s).",
                         reading,
                     )
-                    self.state = GameState.GAME_COMPLETE
-                    return True
             return False
 
         # Scoreboard is present
         self.last_seen_scoreboard_time = ts
         period = reading.period
-        clock = reading.clock_seconds
         score = reading.score or self.last_score
 
         if reading.score:
@@ -197,7 +441,9 @@ class GameTimelineTracker:
                 self.add_event(
                     ts, f"Period 2 began (Score: {score or 'unknown'})", reading
                 )
-            elif period == 1 and clock is not None and clock <= 2.0:
+            elif (
+                period == 1 and clock is not None and clock <= self.CLOCK_END_THRESHOLD
+            ):
                 self.add_event(ts, "Period 1 ended (Clock reached 0:00)", reading)
                 self.state = GameState.INTERMISSION_1
 
@@ -222,7 +468,9 @@ class GameTimelineTracker:
                 self.add_event(
                     ts, f"Period 3 began (Score: {score or 'unknown'})", reading
                 )
-            elif period == 2 and clock is not None and clock <= 2.0:
+            elif (
+                period == 2 and clock is not None and clock <= self.CLOCK_END_THRESHOLD
+            ):
                 self.add_event(ts, "Period 2 ended (Clock reached 0:00)", reading)
                 self.state = GameState.INTERMISSION_2
 
@@ -242,7 +490,7 @@ class GameTimelineTracker:
         # -------------------------------------------------------------
         elif self.state == GameState.P3_RUNNING:
             # Check for clock hitting 0:00 in Period 3
-            if clock is not None and clock <= 2.0:
+            if clock is not None and clock <= self.CLOCK_END_THRESHOLD:
                 # Check score tie condition
                 is_tied = False
                 if score is not None and score[0] == score[1]:
@@ -257,15 +505,13 @@ class GameTimelineTracker:
                     )
                     self.state = GameState.OT_RUNNING
                 else:
-                    self.final_horn_time = ts
                     score_str = f"{score[0]}-{score[1]}" if score else "regulation"
-                    self.add_event(
+                    return self._begin_pending_end(
                         ts,
-                        f"Period 3 ended (0:00 on clock, Score: {score_str}). Game complete!",
+                        ts,
+                        f"Period 3 clock reached 0:00 (Score: {score_str}).",
                         reading,
                     )
-                    self.state = GameState.GAME_COMPLETE
-                    return True
 
             elif period == 4:
                 # Direct transition to OT observed
@@ -277,13 +523,10 @@ class GameTimelineTracker:
         # STATE 7: OT_RUNNING
         # -------------------------------------------------------------
         elif self.state == GameState.OT_RUNNING:
-            if clock is not None and clock <= 2.0:
-                self.final_horn_time = ts
-                self.add_event(
-                    ts, "Overtime ended (0:00 on clock). Game complete!", reading
+            if clock is not None and clock <= self.CLOCK_END_THRESHOLD:
+                return self._begin_pending_end(
+                    ts, ts, "Overtime clock reached 0:00.", reading
                 )
-                self.state = GameState.GAME_COMPLETE
-                return True
 
         if clock is not None:
             self.last_clock = clock
@@ -304,7 +547,9 @@ class GameTimelineTracker:
         # Fallback if final horn wasn't caught at 0:00
         final_horn = self.final_horn_time
         if final_horn is None:
-            if self.last_seen_scoreboard_time and self.p3_observed:
+            if self.pending_end_time is not None:
+                final_horn = self.pending_end_time
+            elif self.last_seen_scoreboard_time and self.p3_observed:
                 final_horn = self.last_seen_scoreboard_time
             else:
                 final_horn = self.video_duration
@@ -313,7 +558,8 @@ class GameTimelineTracker:
         cut_end = min(self.video_duration, final_horn + self.buffer_after)
 
         game_found = self.p1_observed and (
-            self.p3_observed or self.state == GameState.GAME_COMPLETE
+            self.p3_observed
+            or self.state in (GameState.GAME_COMPLETE, GameState.PENDING_GAME_END)
         )
         summary = (
             f"Puck drop: {puck_drop:.1f}s | Final horn: {final_horn:.1f}s | "

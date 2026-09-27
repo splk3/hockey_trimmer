@@ -32,6 +32,12 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
 - **Keyframe-Accurate or Frame-Accurate**: Snaps start cuts to preceding
   keyframes and end cuts to subsequent keyframes to guarantee no game action is
   missed. Supports frame-accurate re-encoding (`--reencode`).
+- **Confirmed Final Horn**: A single 0:00 clock reading never ends the game. The
+  scanner keeps sampling for a confirmation window (default 150s, every 10s) to
+  make sure the clock does not go back above 0:00 after a late timeout or
+  stoppage, and it rejects OCR clock values that count down faster than real
+  time. Tunable via `--end-confirm-window` / `--end-confirm-interval`, or
+  disabled with `--no-end-confirm`.
 - **Configurable Buffers**: Adds customizable pre-game padding (default: 15s
   before opening puck drop) and post-game padding (default: 15s after final horn
   / Period 3 0:00).
@@ -60,8 +66,21 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
      continues into Overtime and ends when the OT period clock reaches `00:00`
      (regardless of score).
    - **Overlay Disappearance**: If the scoreboard overlay turns off after Period
-     3 has been in progress, the disappearance marks the end of the game.
-3. **End of Game**:
+     3 has been in progress, the disappearance marks a candidate end of the game.
+3. **Final Horn Confirmation**:
+   - A candidate end (Period 3 / OT clock at `00:00`, or the overlay turning
+     off) is **not** treated as final immediately: a single OCR misread of the
+     clock during a late timeout would otherwise cut the game short.
+   - The scanner keeps sampling every `--end-confirm-interval` seconds
+     (default 10s) for `--end-confirm-window` seconds (default 150s). If two
+     consecutive readings show the clock back above `00:00`, the candidate is
+     discarded as a false end and scanning continues toward the real horn.
+   - Clock readings are also sanity-checked: a game clock can never count down
+     faster than real elapsed time, so impossible drops (e.g. `0:51` -> `0:05`
+     five seconds later) are discarded as OCR misreads.
+   - If the footage ends while a candidate is still being confirmed, that
+     candidate becomes the final horn.
+4. **End of Game**:
    - A 15-second post-buffer is added after the final horn so celebrations and
      post-game handshakes are included.
 
@@ -197,6 +216,8 @@ usage: hockey_trimmer [-h] -i INPUT [-o OUTPUT] [-c]
                       [--buffer-after BUFFER_AFTER]
                       [--sample-interval SAMPLE_INTERVAL]
                       [--preset {blackbear,top_left,top_center}] [--roi ROI]
+                      [--end-confirm-window SEC] [--end-confirm-interval SEC]
+                      [--no-end-confirm]
                       [--reencode] [--no-keyframe-snap] [-v]
 
 Automated ice hockey video analyzer and trimmer.
@@ -218,6 +239,15 @@ options:
   --roi ROI             Custom scoreboard bounding box as
                         'x1,y1,x2,y2' normalized floats
                         (e.g. '0.045,0.02,0.255,0.14').
+  --end-confirm-window SEC
+                        Seconds to keep watching after a 0:00 clock is first
+                        seen in P3/OT, to make sure the clock does not go back
+                        above 0:00 (default: 150.0).
+  --end-confirm-interval SEC
+                        Sample interval used while confirming the final horn
+                        (default: 10.0).
+  --no-end-confirm      Disable final-horn confirmation and end the game at
+                        the first 0:00 clock reading.
   --reencode            Re-encode video instead of fast stream copy (-c copy).
   --no-keyframe-snap    Disable snapping cut points to adjacent keyframes
                         when using stream copy.
