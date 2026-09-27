@@ -303,7 +303,8 @@ class GameTimelineTracker:
 
         if raw_clock is not None:
             if raw_clock > self.max_resume_clock and reading.period == 1:
-                # A full period clock means the feed moved on to another game.
+                # Two consecutive full-clock Period 1 readings indicate the next
+                # game has started, so the pending horn belongs to the prior game.
                 self.pending_resume_streak = 0
                 self.pending_newgame_streak += 1
                 if self.pending_newgame_streak >= self.RESUME_CONFIRM_COUNT:
@@ -311,6 +312,8 @@ class GameTimelineTracker:
                         ts, "a new game's clock appeared", reading
                     )
             elif raw_clock > self.CLOCK_END_THRESHOLD:
+                # Outside the Period 1 new-game case, resumed clocks mean the
+                # 0:00 candidate was a false end in the current game.
                 self.pending_newgame_streak = 0
                 self.pending_resume_streak += 1
                 if self.pending_resume_streak >= self.RESUME_CONFIRM_COUNT:

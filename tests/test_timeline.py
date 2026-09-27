@@ -144,6 +144,22 @@ class TestGameTimelineTracker(unittest.TestCase):
         )
         self.assertEqual(tracker.state, GameState.SEARCHING_START)
         self.assertFalse(tracker.p1_observed)
+        self.assertIsNone(tracker.final_horn_time)
+
+        # Prior game's final horn cannot end the target game before Period 1 is seen.
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True,
+                    timestamp=60.0,
+                    period=3,
+                    clock_seconds=0.0,
+                    score=(3, 2),
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        self.assertIsNone(tracker.final_horn_time)
 
         # Prior game ends, scoreboard disappears
         tracker.process_reading(ScoreboardReading(present=False, timestamp=500.0))
