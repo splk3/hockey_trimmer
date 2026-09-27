@@ -100,6 +100,8 @@ The test suite mirrors this split with `test_cli.py`, `test_detector.py`, `test_
 - Prefer the `--check` mode when validating detection logic; it is the lowest-risk way to inspect boundaries without writing output files.
 - ROI values are normalized to 0.0-1.0 coordinates when passed as `--roi`; detector presets and custom ROIs are interpreted relative to the frame size.
 - The project favors lossless stream-copy trimming by default; keyframe snapping is part of the normal workflow unless `--no-keyframe-snap` or `--reencode` is chosen.
+- A single 0:00 clock reading never ends the game: `GameTimelineTracker` enters `PENDING_GAME_END` and confirms the clock does not resume for `end_confirm_window` seconds (sampled every `end_confirm_interval`). Clock values that drop faster than real elapsed time are rejected as OCR misreads.
+- `analyze_video()` must call `timeline.finalize()` after the scan loop so a candidate final horn is resolved when the footage runs out mid-confirmation.
 - Time values are treated as seconds throughout the codebase, and CLI output uses `HH:MM:SS` formatting only for reporting.
 - Tests use standard-library `unittest` rather than a pytest-specific convention, even though pytest is available in dev dependencies.
 

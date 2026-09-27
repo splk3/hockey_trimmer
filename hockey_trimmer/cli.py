@@ -9,7 +9,7 @@ import time
 from typing import Optional
 
 from .detector import ScoreboardDetector
-from .timeline import GameTimelineTracker, GameBoundaries
+from .timeline import GameTimelineTracker, GameBoundaries, GameState
 from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
 
 
@@ -33,6 +33,9 @@ def analyze_video(
     custom_roi: Optional[tuple] = None,
     verbose: bool = False,
     fine_refine: bool = True,
+    end_confirm_window: float = 150.0,
+    end_confirm_interval: float = 10.0,
+    enable_end_confirm: bool = True,
 ) -> GameBoundaries:
     """
     Scans video to identify the first complete hockey game and its cut boundaries.
@@ -53,12 +56,22 @@ def analyze_video(
     print(
         f"   Buffers: {buffer_before:.1f}s before puck drop, {buffer_after:.1f}s after final horn"
     )
+    if enable_end_confirm:
+        print(
+            f"   End confirmation: {end_confirm_window:.0f}s window "
+            f"sampled every {end_confirm_interval:.0f}s"
+        )
+    else:
+        print("   End confirmation: disabled")
 
     detector = ScoreboardDetector(preset=preset, custom_roi=custom_roi)
     timeline = GameTimelineTracker(
         buffer_before=buffer_before,
         buffer_after=buffer_after,
         video_duration=duration,
+        end_confirm_window=end_confirm_window,
+        end_confirm_interval=end_confirm_interval,
+        enable_end_confirm=enable_end_confirm,
     )
 
     t_curr = 0.0
@@ -68,8 +81,10 @@ def analyze_video(
     print("\n🔍 Scanning for scoreboard and game transitions...")
 
     last_reported_state = None
+    confirm_step = max(1.0, min(sample_interval, end_confirm_interval))
 
     while t_curr < duration:
+        step = sample_interval
         frame = extract_frame_at_timestamp(video_path, t_curr)
         if frame is not None:
             reading = detector.analyze_frame(frame, t_curr)
@@ -95,7 +110,12 @@ def analyze_video(
                 )
                 break
 
-        t_curr += sample_interval
+            # While a candidate final horn awaits confirmation, sample finely so
+            # a clock that resumes after a stoppage/timeout is never missed.
+            if timeline.state == GameState.PENDING_GAME_END:
+                step = confirm_step
+
+        t_curr += step
         sample_idx += 1
         if sample_idx % 20 == 0 and not verbose:
             pct = min(100.0, (t_curr / duration) * 100)
@@ -104,6 +124,8 @@ def analyze_video(
                 end="\r",
                 flush=True,
             )
+
+    timeline.finalize()
 
     print(f"\n   Scan completed in {time.time() - start_time_proc:.1f}s.")
 
@@ -128,23 +150,31 @@ def analyze_video(
                             boundaries.cut_start_time = max(0.0, ts - buffer_before)
                             break
 
-        # Refine final horn time
+        # Refine final horn time. Require two consecutive low readings so a
+        # single OCR misread cannot pull the final horn earlier.
         if timeline.final_horn_time is not None:
             refine_start = max(0.0, timeline.final_horn_time - sample_interval)
             refine_end = min(duration, timeline.final_horn_time + sample_interval)
+            zero_run_start = None
             for ts in [refine_start + i for i in range(int(refine_end - refine_start))]:
                 f = extract_frame_at_timestamp(video_path, ts)
-                if f:
-                    r = detector.analyze_frame(f, ts)
-                    if (
-                        r.present
-                        and (r.period == 3 or r.period == 4)
-                        and r.clock_seconds is not None
-                    ):
-                        if r.clock_seconds <= 1.0:
-                            boundaries.final_horn_time = ts
-                            boundaries.cut_end_time = min(duration, ts + buffer_after)
-                            break
+                if not f:
+                    continue
+                r = detector.analyze_frame(f, ts)
+                is_zero = (
+                    r.present and r.clock_seconds is not None and r.clock_seconds <= 1.0
+                )
+                if is_zero:
+                    if zero_run_start is None:
+                        zero_run_start = ts
+                    else:
+                        boundaries.final_horn_time = zero_run_start
+                        boundaries.cut_end_time = min(
+                            duration, zero_run_start + buffer_after
+                        )
+                        break
+                else:
+                    zero_run_start = None
 
     return boundaries
 
@@ -214,6 +244,26 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         help="Custom scoreboard bounding box as 'x1,y1,x2,y2' normalized floats (e.g. '0.04,0.02,0.25,0.20').",
     )
     parser.add_argument(
+        "--end-confirm-window",
+        type=float,
+        default=150.0,
+        help=(
+            "Seconds to keep watching after a 0:00 clock is first seen in P3/OT, "
+            "to make sure the clock does not go back above 0:00 (default: 150.0)."
+        ),
+    )
+    parser.add_argument(
+        "--end-confirm-interval",
+        type=float,
+        default=10.0,
+        help="Sample interval used while confirming the final horn (default: 10.0).",
+    )
+    parser.add_argument(
+        "--no-end-confirm",
+        action="store_true",
+        help="Disable final-horn confirmation and end the game at the first 0:00 clock reading.",
+    )
+    parser.add_argument(
         "--reencode",
         action="store_true",
         help="Re-encode video instead of fast stream copy (-c copy).",
@@ -267,6 +317,9 @@ def main(argv: Optional[list] = None) -> int:
             preset=args.preset,
             custom_roi=custom_roi,
             verbose=args.verbose,
+            end_confirm_window=args.end_confirm_window,
+            end_confirm_interval=args.end_confirm_interval,
+            enable_end_confirm=not args.no_end_confirm,
         )
     except Exception as exc:
         print(f"❌ Error analyzing video: {exc}", file=sys.stderr)
