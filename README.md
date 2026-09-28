@@ -22,10 +22,13 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
 - **First Complete Game Selection**: Intelligently ignores warmups and mid-game
   recordings from previous matches, locking onto the _first complete match_
   (Period 1 -> Period 2 -> Period 3 -> End).
-- **Self-Contained Digit & Period Recognition**: Includes a built-in OpenCV
-  contour slot matcher that reads digital game clocks (`MM:SS`) and periods
-  (`1`, `2`, `3`, `OT`) in microseconds without requiring external Tesseract
-  binaries.
+- **Self-Contained Digit & Period Recognition**: Reads digital game clocks
+  (`MM:SS`) and periods (`1`, `2`, `3`, `OT`) without requiring external
+  Tesseract binaries. Black Bear TV overlays are matched against grayscale
+  templates cut from real broadcast frames (`hockey_trimmer/assets/blackbear/`), which
+  reliably separates the tiny period tab digits (e.g. `3` vs `1`) and clock
+  digits (`3`/`8`, `4`/`0`) even after JPEG compression. Ambiguous template
+  matches are not guessed; generic OCR and optional Tesseract provide fallback.
 - **Fast Lossless Stream Copy**: Defaults to `ffmpeg -c copy` snapped to
   adjacent keyframes—cuts multi-gigabyte video files in seconds with zero CPU
   re-encoding overhead and zero quality loss.
@@ -53,8 +56,17 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
 
 1. **Start of Game**:
    - The scanner searches for the appearance of the Period 1 scoreboard.
+   - A period is only trusted after two consecutive samples agree, so a single
+     misread tab digit cannot advance the game or fake a new Period 1.
+   - A recording that opens mid-way through a previous game is skipped: a
+     confirmed Period 2/3/OT while searching discards any Period 1 candidate,
+     and a Period 1 clock is only a start candidate once it has been seen at a
+     full-period value (at least `8:00`, e.g. `15:00`).
+   - A long scoreboard absence while searching (5+ minutes, e.g. the break
+     between two games) resets any earlier start candidate.
    - Opening puck drop is locked when the Period 1 clock begins counting down
-     from starting duration (e.g. `15:00` -> `14:59`).
+     from starting duration (e.g. `15:00` -> `14:59`). If Period 3/OT shows up
+     before Period 2, that puck drop is discarded as a false start.
    - A 15-second pre-buffer is added so player introductions and faceoff lineups
      are preserved.
 2. **Regulation & Overtime**:
@@ -188,7 +200,13 @@ python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --reencode
 If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in
 normalized coordinates (0.0 to 1.0):
 
-```bash
+```
+
+`--roi` changes the overlay position, not its layout or OCR strategy. Select
+`--preset blackbear` for Black Bear TV layouts; `top_left` and `top_center`
+use the generic digit matcher and optional Tesseract OCR. For Black Bear TV,
+generic OCR is also tried when its specialized template matcher cannot read a
+glyph confidently.bash
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --roi 0.05,0.02,0.25,0.14
 ```
 
@@ -284,7 +302,8 @@ hockey-trimmer/
 │   ├── __init__.py         # Package entrypoint and exports
 │   ├── cli.py              # CLI argument parser and scan orchestrator
 │   ├── detector.py         # Scoreboard presence detector and ROI cropper
-│   ├── ocr.py              # BuiltinDigitMatcher & OCR parsing utilities
+│   ├── ocr.py              # Overlay template & digit matchers, OCR parsing
+│   ├── assets/blackbear/   # Black Bear TV period and clock digit templates
 │   ├── timeline.py         # GameTimelineTracker state machine
 │   └── trimmer.py          # FFmpeg video probing, keyframe snapping, and cutter
 ├── tests/
@@ -294,8 +313,12 @@ hockey-trimmer/
 │   ├── test_ocr.py         # Tests for clock, period, and score parsing
 │   ├── test_timeline.py    # Tests for regulation, OT, and multi-game logic
 │   ├── test_trimmer.py     # Tests for video probing and keyframe snapping
+│   ├── fixtures/           # Synthetic frames and real overlay crops
 │   └── generate_fixtures.py
 │                           # Synthetic test frame generator for CI
+├── scripts/
+│   └── build_ocr_templates.py
+│                           # Rebuilds assets/blackbear/ from labelled footage
 ├── .github/
 │   ├── dependabot.yml      # Dependabot configuration for pip & actions
 │   └── workflows/
