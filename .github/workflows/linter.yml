@@ -31,3 +31,4 @@ jobs:
           VALIDATE_PYTHON_FLAKE8: true
           VALIDATE_MARKDOWN: true
           VALIDATE_YAML: true
+          MARKDOWN_CONFIG_FILE: .github/linters/.markdownlint.yaml

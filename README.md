@@ -200,7 +200,7 @@ python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --reencode
 If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in
 normalized coordinates (0.0 to 1.0):
 
-```
+```bash
 
 `--roi` changes the overlay position, not its layout or OCR strategy. Select
 `--preset blackbear` for Black Bear TV layouts; `top_left` and `top_center`
