@@ -110,10 +110,10 @@ def analyze_video(
                 )
                 break
 
-            # While a candidate final horn awaits confirmation, sample finely so
-            # a clock that resumes after a stoppage/timeout is never missed.
-            if timeline.state == GameState.PENDING_GAME_END:
-                step = confirm_step
+        # While a candidate final horn awaits confirmation, sample finely so
+        # a clock that resumes after a stoppage/timeout is never missed.
+        if timeline.state == GameState.PENDING_GAME_END:
+            step = confirm_step
 
         t_curr += step
         sample_idx += 1
@@ -162,7 +162,10 @@ def analyze_video(
                     continue
                 r = detector.analyze_frame(f, ts)
                 is_zero = (
-                    r.present and r.clock_seconds is not None and r.clock_seconds <= 1.0
+                    r.present
+                    and r.period in (3, 4)
+                    and r.clock_seconds is not None
+                    and r.clock_seconds <= 1.0
                 )
                 if is_zero:
                     if zero_run_start is None:

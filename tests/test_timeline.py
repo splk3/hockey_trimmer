@@ -63,7 +63,17 @@ class TestGameTimelineTracker(unittest.TestCase):
         )
         self.assertEqual(tracker.state, GameState.INTERMISSION_1)
 
-        # 5. Period 2
+        # 5. Period 2 (a period must be read twice in a row to be trusted)
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True,
+                timestamp=1490.0,
+                period=2,
+                clock_seconds=860.0,
+                score=(1, 1),
+            )
+        )
+        self.assertEqual(tracker.state, GameState.INTERMISSION_1)
         self.assertFalse(
             tracker.process_reading(
                 ScoreboardReading(
@@ -78,6 +88,15 @@ class TestGameTimelineTracker(unittest.TestCase):
         self.assertEqual(tracker.state, GameState.P2_RUNNING)
 
         # 6. Period 3
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True,
+                timestamp=2690.0,
+                period=3,
+                clock_seconds=900.0,
+                score=(2, 1),
+            )
+        )
         self.assertFalse(
             tracker.process_reading(
                 ScoreboardReading(
@@ -144,6 +163,22 @@ class TestGameTimelineTracker(unittest.TestCase):
         )
         self.assertEqual(tracker.state, GameState.SEARCHING_START)
         self.assertFalse(tracker.p1_observed)
+        self.assertIsNone(tracker.final_horn_time)
+
+        # Prior game's final horn cannot end the target game before Period 1 is seen.
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True,
+                    timestamp=60.0,
+                    period=3,
+                    clock_seconds=0.0,
+                    score=(3, 2),
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        self.assertIsNone(tracker.final_horn_time)
 
         # Prior game ends, scoreboard disappears
         tracker.process_reading(ScoreboardReading(present=False, timestamp=500.0))
@@ -201,10 +236,28 @@ class TestGameTimelineTracker(unittest.TestCase):
         tracker.process_reading(
             ScoreboardReading(
                 present=True,
+                timestamp=990.0,
+                period=2,
+                clock_seconds=510.0,
+                score=(1, 1),
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True,
                 timestamp=1000.0,
                 period=2,
                 clock_seconds=500.0,
                 score=(1, 1),
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True,
+                timestamp=1990.0,
+                period=3,
+                clock_seconds=510.0,
+                score=(2, 2),
             )
         )
         tracker.process_reading(
@@ -277,7 +330,17 @@ class TestGameTimelineTracker(unittest.TestCase):
         )
         tracker.process_reading(
             ScoreboardReading(
+                present=True, timestamp=1490.0, period=2, clock_seconds=310.0
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
                 present=True, timestamp=1500.0, period=2, clock_seconds=300.0
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True, timestamp=2490.0, period=3, clock_seconds=55.0
             )
         )
         tracker.process_reading(
@@ -323,7 +386,20 @@ class TestEndOfGameConfirmation(unittest.TestCase):
         )
         tracker.process_reading(
             ScoreboardReading(
+                present=True, timestamp=1490.0, period=2, clock_seconds=610.0
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
                 present=True, timestamp=1500.0, period=2, clock_seconds=600.0
+            )
+        )
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True,
+                timestamp=p3_time - 10.0,
+                period=3,
+                clock_seconds=p3_clock + 10.0,
             )
         )
         tracker.process_reading(
@@ -473,6 +549,37 @@ class TestEndOfGameConfirmation(unittest.TestCase):
         self.assertTrue(is_done)
         self.assertEqual(tracker.final_horn_time, 3030.0)
 
+    def test_high_clock_in_period3_cancels_pending_end(self):
+        """High resumed clocks outside Period 1 should cancel pending end."""
+        tracker = GameTimelineTracker(video_duration=6000.0)
+        self._advance_to_p3(tracker, p3_clock=30.0, p3_time=3000.0)
+        tracker.process_reading(
+            ScoreboardReading(
+                present=True, timestamp=3030.0, period=3, clock_seconds=0.0
+            )
+        )
+        self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True, timestamp=3040.0, period=3, clock_seconds=600.0
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+
+        self.assertFalse(
+            tracker.process_reading(
+                ScoreboardReading(
+                    present=True, timestamp=3050.0, period=3, clock_seconds=600.0
+                )
+            )
+        )
+        self.assertEqual(tracker.state, GameState.P3_RUNNING)
+        self.assertIsNone(tracker.final_horn_time)
+        self.assertEqual(tracker.false_end_count, 1)
+
     def test_implausible_clock_drop_is_rejected_then_resyncs(self):
         """Isolated misreads are dropped, but a sustained new value re-syncs."""
         tracker = GameTimelineTracker(video_duration=6000.0)
@@ -530,6 +637,159 @@ class TestEndOfGameConfirmation(unittest.TestCase):
         self.assertTrue(is_done)
         self.assertEqual(tracker.state, GameState.GAME_COMPLETE)
         self.assertEqual(tracker.final_horn_time, 3030.0)
+
+
+def _r(ts, period=None, clock=None, present=True, score=None):
+    return ScoreboardReading(
+        present=present,
+        timestamp=float(ts),
+        period=period,
+        clock_seconds=None if clock is None else float(clock),
+        score=score,
+    )
+
+
+class TestGameStartDetection(unittest.TestCase):
+    """Guards that keep a previous game's late periods from faking a start."""
+
+    def test_previous_game_p3_with_p1_misreads_is_skipped(self):
+        """
+        Replays 20260927-ducks12aa-at-pbk12aa-raw.mp4 as the old OCR saw it:
+        the feed opens ~5:48 into a previous game's Period 3 and about half
+        the tabs were misread as "1". The real puck drop is at ~28:18.
+        """
+        tracker = GameTimelineTracker(video_duration=8143.0)
+        prev_game = [
+            (0, 3, 348),
+            (10, 1, None),
+            (20, 1, None),
+            (30, 3, 319),
+            (40, 1, 311),
+            (50, 1, 309),
+            (60, 1, 309),
+            (70, 1, 305),
+            (80, 1, 295),
+            (90, 3, 285),
+            (100, 3, None),
+            (110, 1, None),
+            (120, 1, None),
+            (170, 1, 252),
+            (180, 1, 242),
+        ]
+        for ts, period, clock in prev_game:
+            self.assertFalse(tracker.process_reading(_r(ts, period, clock)))
+            self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        self.assertIsNone(tracker.puck_drop_time)
+
+        # Break between games: no overlay for ~16 minutes.
+        for ts in range(650, 1600, 10):
+            tracker.process_reading(_r(ts, present=False))
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+
+        # New game: Period 1 parked at 15:00, then the clock starts.
+        for ts in range(1600, 1700, 10):
+            tracker.process_reading(_r(ts, 1, 900))
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        tracker.process_reading(_r(1700, 1, 898))
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        self.assertEqual(tracker.puck_drop_time, 1700.0)
+        self.assertTrue(
+            any("already in progress" in e.description for e in tracker.events)
+        )
+
+    def test_low_period1_clock_is_not_a_game_start(self):
+        """A consistent Period 1 at a low clock is not a full-period start."""
+        tracker = GameTimelineTracker(video_duration=6000.0)
+        for ts, clock in ((0, 311), (10, 309), (20, 300), (30, 290)):
+            tracker.process_reading(_r(ts, 1, clock))
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        self.assertFalse(tracker.p1_observed)
+        self.assertFalse(tracker.get_boundaries().game_found)
+
+    def test_min_period_start_clock_is_configurable(self):
+        tracker = GameTimelineTracker(min_period_start_clock=240.0)
+        tracker.process_reading(_r(0, 1, 300))
+        tracker.process_reading(_r(10, 1, 295))
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        self.assertEqual(tracker.puck_drop_time, 10.0)
+
+    def test_confirmed_later_period_discards_p1_candidate(self):
+        tracker = GameTimelineTracker()
+        tracker.process_reading(_r(0, 1, 900))
+        self.assertTrue(tracker.p1_observed)
+        tracker.process_reading(_r(10, 3, 600))
+        tracker.process_reading(_r(20, 3, 590))
+        self.assertFalse(tracker.p1_observed)
+        self.assertIsNone(tracker.p1_candidate_start)
+        self.assertIsNone(tracker.p1_max_clock)
+
+    def test_single_period_misread_does_not_change_state(self):
+        tracker = GameTimelineTracker()
+        tracker.process_reading(_r(0, 1, 900))
+        tracker.process_reading(_r(10, 1, 890))
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        # One stray "3" (or "2") must not advance the game.
+        tracker.process_reading(_r(20, 3, 880))
+        tracker.process_reading(_r(30, 1, 870))
+        tracker.process_reading(_r(40, 2, 860))
+        tracker.process_reading(_r(50, 1, 850))
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        self.assertEqual(tracker.confirmed_period, 1)
+
+    def test_single_period_error_cannot_rebaseline_clock_or_end_game(self):
+        tracker = GameTimelineTracker()
+        for ts, period, clock in (
+            (0, 1, 900),
+            (10, 1, 890),
+            (20, 2, 870),
+            (30, 2, 860),
+            (40, 3, 600),
+            (50, 3, 590),
+        ):
+            tracker.process_reading(_r(ts, period, clock))
+        self.assertEqual(tracker.state, GameState.P3_RUNNING)
+
+        tracker.process_reading(_r(60, 1, 0))
+        self.assertEqual(tracker.state, GameState.P3_RUNNING)
+        self.assertEqual(tracker.last_accepted_clock, 590)
+        self.assertIsNone(tracker.pending_end_time)
+        tracker.process_reading(_r(70, 3, 570))
+        self.assertEqual(tracker.state, GameState.P3_RUNNING)
+
+    def test_period3_before_period2_discards_false_start(self):
+        tracker = GameTimelineTracker()
+        tracker.process_reading(_r(0, 1, 900))
+        tracker.process_reading(_r(10, 1, 890))
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        tracker.process_reading(_r(20, 3, 500))
+        tracker.process_reading(_r(30, 3, 490))
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        self.assertIsNone(tracker.puck_drop_time)
+        self.assertFalse(tracker.p1_observed)
+
+    def test_long_overlay_gap_resets_start_candidate(self):
+        tracker = GameTimelineTracker(start_gap_reset=300.0)
+        tracker.process_reading(_r(0, 1, 900))
+        tracker.process_reading(_r(10, 1, 900))
+        self.assertEqual(tracker.p1_candidate_start, 0.0)
+        for ts in range(20, 400, 10):
+            tracker.process_reading(_r(ts, present=False))
+        tracker.process_reading(_r(400, 1, 900))
+        self.assertEqual(tracker.p1_candidate_start, 400.0)
+        self.assertEqual(tracker.state, GameState.SEARCHING_START)
+        # Period votes were reset too, so one reading is not yet confirmed.
+        self.assertIsNone(tracker.confirmed_period)
+
+    def test_short_overlay_gap_keeps_start_candidate(self):
+        tracker = GameTimelineTracker(start_gap_reset=300.0)
+        tracker.process_reading(_r(0, 1, 900))
+        tracker.process_reading(_r(10, 1, 900))
+        for ts in range(20, 100, 10):
+            tracker.process_reading(_r(ts, present=False))
+        tracker.process_reading(_r(100, 1, 895))
+        self.assertEqual(tracker.p1_candidate_start, 0.0)
+        self.assertEqual(tracker.state, GameState.P1_RUNNING)
+        self.assertEqual(tracker.puck_drop_time, 100.0)
 
 
 if __name__ == "__main__":

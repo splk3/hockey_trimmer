@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 from hockey_trimmer.cli import parse_args, format_seconds, main, analyze_video
 from hockey_trimmer.detector import ScoreboardReading
+from hockey_trimmer.timeline import GameBoundaries, GameState
 from hockey_trimmer.trimmer import VideoInfo
 
 
@@ -183,6 +184,161 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
     def test_pending_end_finalized_when_video_ends(self):
         boundaries = self._run(duration=3100.0)
         self.assertTrue(boundaries.game_found)
+        self.assertEqual(boundaries.final_horn_time, 3000.0)
+        self.assertEqual(boundaries.cut_end_time, 3015.0)
+
+    def test_pending_confirmation_keeps_fine_step_on_frame_miss(self):
+        info = VideoInfo(
+            path="game.mp4",
+            duration=130.0,
+            width=1280,
+            height=720,
+            fps=30.0,
+            video_codec="h264",
+            audio_codec="aac",
+        )
+        sampled_timestamps = []
+
+        class _PendingOnFirstReadingTimeline:
+            def __init__(self, *args, **kwargs):
+                self.state = GameState.SEARCHING_START
+                self.events = []
+                self._seen = 0
+
+            def process_reading(self, reading):
+                self._seen += 1
+                if self._seen == 1:
+                    self.state = GameState.PENDING_GAME_END
+                return False
+
+            def finalize(self):
+                return False
+
+            def get_boundaries(self):
+                return GameBoundaries(
+                    puck_drop_time=0.0,
+                    final_horn_time=0.0,
+                    cut_start_time=0.0,
+                    cut_end_time=0.0,
+                    game_found=False,
+                )
+
+        class _MinimalDetector:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def analyze_frame(self, frame, timestamp):
+                return ScoreboardReading(present=False, timestamp=timestamp)
+
+        def _extract(path, timestamp):
+            sampled_timestamps.append(timestamp)
+            return object() if timestamp == 0.0 else None
+
+        with patch("hockey_trimmer.cli.os.path.exists", return_value=True), patch(
+            "hockey_trimmer.cli.probe_video", return_value=info
+        ), patch(
+            "hockey_trimmer.cli.extract_frame_at_timestamp", side_effect=_extract
+        ), patch(
+            "hockey_trimmer.cli.ScoreboardDetector", _MinimalDetector
+        ), patch(
+            "hockey_trimmer.cli.GameTimelineTracker", _PendingOnFirstReadingTimeline
+        ), patch(
+            "sys.stdout", io.StringIO()
+        ):
+            analyze_video(
+                "game.mp4",
+                sample_interval=50.0,
+                end_confirm_interval=10.0,
+                fine_refine=False,
+            )
+
+        self.assertGreaterEqual(len(sampled_timestamps), 3)
+        self.assertEqual(sampled_timestamps[:3], [0.0, 10.0, 20.0])
+
+    def test_final_horn_refine_ignores_low_clock_from_non_p3_periods(self):
+        info = VideoInfo(
+            path="game.mp4",
+            duration=4000.0,
+            width=1280,
+            height=720,
+            fps=30.0,
+            video_codec="h264",
+            audio_codec="aac",
+        )
+
+        class _StaticCompletedTimeline:
+            def __init__(self, *args, **kwargs):
+                self.state = GameState.SEARCHING_START
+                self.events = []
+                self.puck_drop_time = None
+                self.p1_max_clock = None
+                self.final_horn_time = 3000.0
+
+            def process_reading(self, reading):
+                self.state = GameState.GAME_COMPLETE
+                return True
+
+            def finalize(self):
+                return True
+
+            def get_boundaries(self):
+                return GameBoundaries(
+                    puck_drop_time=100.0,
+                    final_horn_time=3000.0,
+                    cut_start_time=85.0,
+                    cut_end_time=3015.0,
+                    game_found=True,
+                )
+
+        class _RefineDetector:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def analyze_frame(self, frame, timestamp):
+                if 2990.0 <= timestamp <= 2991.0:
+                    return ScoreboardReading(
+                        present=True,
+                        timestamp=timestamp,
+                        period=2,
+                        clock_seconds=0.0,
+                        score=(2, 1),
+                    )
+                if 3000.0 <= timestamp <= 3001.0:
+                    return ScoreboardReading(
+                        present=True,
+                        timestamp=timestamp,
+                        period=3,
+                        clock_seconds=0.0,
+                        score=(3, 1),
+                    )
+                return ScoreboardReading(
+                    present=True,
+                    timestamp=timestamp,
+                    period=3,
+                    clock_seconds=10.0,
+                    score=(3, 1),
+                )
+
+        def _extract(path, timestamp):
+            if timestamp == 0.0 or 2990.0 <= timestamp < 3010.0:
+                return object()
+            return None
+
+        with patch("hockey_trimmer.cli.os.path.exists", return_value=True), patch(
+            "hockey_trimmer.cli.probe_video", return_value=info
+        ), patch(
+            "hockey_trimmer.cli.extract_frame_at_timestamp", side_effect=_extract
+        ), patch(
+            "hockey_trimmer.cli.ScoreboardDetector", _RefineDetector
+        ), patch(
+            "hockey_trimmer.cli.GameTimelineTracker", _StaticCompletedTimeline
+        ), patch(
+            "sys.stdout", io.StringIO()
+        ):
+            boundaries = analyze_video(
+                "game.mp4", sample_interval=10.0, fine_refine=True
+            )
+
         self.assertEqual(boundaries.final_horn_time, 3000.0)
         self.assertEqual(boundaries.cut_end_time, 3015.0)
 

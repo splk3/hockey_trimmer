@@ -287,7 +287,229 @@ class BuiltinDigitMatcher:
         if binary[5, 5] == 1 or binary[6, 5] == 1:
             return 3
 
-        return 1
+        # No rule matched: report "unknown" rather than guessing Period 1,
+        # which would let a previous game's P3 masquerade as a new game.
+        return None
+
+
+BLACKBEAR_ASSETS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "assets", "blackbear"
+)
+
+
+class OverlayTemplateMatcher:
+    """
+    Grayscale template matcher using glyphs cut from Blackbear broadcast overlays.
+
+    The Black Bear TV period digit is only ~4x8 px at 720p and is heavily
+    affected by JPEG compression, so binarized pixel rules cannot tell a "1"
+    from a "3". Instead crops are normalized to a canonical size, upscaled,
+    and compared with averaged real-overlay templates using normalized
+    cross-correlation over a small shift range. A label is returned only when
+    it wins by a clear margin.
+    """
+
+    # Canonical size of the period ROI crop (native pixels at 1280x720).
+    PERIOD_CANVAS = (84, 18)
+    # Glyph window inside the canonical period canvas: (x1, y1, x2, y2).
+    PERIOD_GLYPH_BOX = (36, 3, 52, 17)
+    PERIOD_SCALE = 4
+    PERIOD_MIN_SCORE = 0.55
+    PERIOD_MIN_MARGIN = 0.06
+
+    # Canonical size of the clock ROI crop and normalized digit cell size.
+    CLOCK_CANVAS = (110, 29)
+    CLOCK_SCALE = 4
+    DIGIT_CELL = (26, 32)
+    DIGIT_MIN_SCORE = 0.60
+    DIGIT_MIN_MARGIN = 0.02
+
+    def __init__(self, assets_dir: Optional[str] = None):
+        self.assets_dir = assets_dir or BLACKBEAR_ASSETS_DIR
+        self.period_templates: Dict[int, np.ndarray] = {}
+        self.digit_templates: Dict[str, np.ndarray] = {}
+        if HAS_CV2:
+            self._load_templates()
+
+    @property
+    def has_period_templates(self) -> bool:
+        return bool(self.period_templates)
+
+    @property
+    def has_digit_templates(self) -> bool:
+        return len(self.digit_templates) == 10
+
+    def _load_templates(self) -> None:
+        for p in range(1, 5):
+            path = os.path.join(self.assets_dir, f"period_{p}.png")
+            if os.path.exists(path):
+                self.period_templates[p] = np.array(
+                    Image.open(path).convert("L"), dtype=np.float32
+                )
+        for d in "0123456789":
+            path = os.path.join(self.assets_dir, f"clock_digit_{d}.png")
+            if os.path.exists(path):
+                self.digit_templates[d] = np.array(
+                    Image.open(path).convert("L"), dtype=np.float32
+                )
+
+    # ------------------------------------------------------------------
+    # Shared preprocessing (also used by scripts/build_ocr_templates.py)
+    # ------------------------------------------------------------------
+    @classmethod
+    def period_canvas(cls, period_crop: Image.Image) -> np.ndarray:
+        """Normalize a period crop to the upscaled canonical grayscale canvas."""
+        s = cls.PERIOD_SCALE
+        w, h = cls.PERIOD_CANVAS
+        gray = period_crop.convert("L").resize((w, h), Image.Resampling.BICUBIC)
+        up = gray.resize((w * s, h * s), Image.Resampling.BICUBIC)
+        return np.array(up, dtype=np.float32)
+
+    @classmethod
+    def period_glyph(cls, period_crop: Image.Image) -> np.ndarray:
+        """Return the canonical glyph window used to build period templates."""
+        s = cls.PERIOD_SCALE
+        x1, y1, x2, y2 = cls.PERIOD_GLYPH_BOX
+        return cls.period_canvas(period_crop)[y1 * s : y2 * s, x1 * s : x2 * s]
+
+    @classmethod
+    def clock_digit_cells(cls, clock_crop: Image.Image) -> Optional[list]:
+        """
+        Segment the dark clock digits into normalized cells, left to right.
+        Returns None if the crop does not look like an M:SS / MM:SS clock.
+        """
+        if not HAS_CV2:
+            return None
+        s = cls.CLOCK_SCALE
+        w, h = cls.CLOCK_CANVAS
+        if clock_crop.width == 0 or clock_crop.height == 0:
+            return None
+        gray = clock_crop.convert("L").resize((w, h), Image.Resampling.BICUBIC)
+        gray = gray.resize((w * s, h * s), Image.Resampling.BICUBIC)
+        arr = np.array(gray)
+
+        # Digits are dark ink on a white box; Otsu separates them robustly.
+        _, ink = cv2.threshold(arr, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+        H = arr.shape[0]
+        boxes = []
+        for i in range(1, n):
+            x, y, bw, bh, area = stats[i]
+            # Digit glyphs span ~35-50% of the clock crop height; the colon
+            # dots, box borders and background are rejected here.
+            if (
+                0.25 * H <= bh <= 0.75 * H
+                and bw <= 2.2 * bh
+                and area >= 0.03 * bh * bh
+                and y > 0
+                and y + bh < H
+            ):
+                boxes.extend(cls._split_merged_digits(ink, x, y, bw, bh))
+        if len(boxes) not in (3, 4):
+            return None
+        boxes.sort(key=lambda b: b[0])
+        heights = [b[3] for b in boxes]
+        if max(heights) > 1.25 * min(heights):
+            return None
+
+        cells = []
+        for x, y, bw, bh in boxes:
+            patch = arr[y : y + bh, x : x + bw]
+            cells.append(cls._normalize_digit(patch))
+        return cells
+
+    @staticmethod
+    def _split_merged_digits(ink: np.ndarray, x: int, y: int, bw: int, bh: int) -> list:
+        """
+        Split a component holding two touching digits (common at low
+        resolutions, e.g. "00") at the weakest ink column near its middle.
+        """
+        if bw <= 1.35 * bh:
+            return [(x, y, bw, bh)]
+        region = ink[y : y + bh, x : x + bw] > 0
+        cols = region.sum(axis=0)
+        lo, hi = int(bw * 0.35), int(bw * 0.65)
+        cut = lo + int(np.argmin(cols[lo:hi]))
+        pieces = []
+        for x0, x1 in ((0, cut), (cut + 1, bw)):
+            sub = region[:, x0:x1]
+            xs = np.where(sub.any(axis=0))[0]
+            if xs.size == 0:
+                continue
+            pieces.append((x + x0 + int(xs[0]), y, int(xs[-1] - xs[0] + 1), bh))
+        return pieces
+
+    @classmethod
+    def _normalize_digit(cls, patch: np.ndarray) -> np.ndarray:
+        """Place a digit patch into a fixed cell keeping its aspect ratio."""
+        cw, ch = cls.DIGIT_CELL
+        bh, bw = patch.shape
+        scale = ch / float(bh)
+        nw = max(1, min(cw, int(round(bw * scale))))
+        resized = cv2.resize(patch, (nw, ch), interpolation=cv2.INTER_AREA)
+        cell = np.full((ch, cw), 255, dtype=np.uint8)
+        x0 = (cw - nw) // 2
+        cell[:, x0 : x0 + nw] = resized
+        return cell.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Matching
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _zncc(a: np.ndarray, b: np.ndarray) -> float:
+        a = a - a.mean()
+        b = b - b.mean()
+        denom = np.sqrt(np.sum(a * a) * np.sum(b * b))
+        if denom < 1e-6:
+            return 0.0
+        return float(np.sum(a * b) / denom)
+
+    def period_scores(self, period_crop: Image.Image) -> Dict[int, float]:
+        """Best normalized correlation for each period template."""
+        if not HAS_CV2 or not self.period_templates:
+            return {}
+        canvas = self.period_canvas(period_crop)
+        scores = {}
+        for label, tmpl in self.period_templates.items():
+            if canvas.shape[0] < tmpl.shape[0] or canvas.shape[1] < tmpl.shape[1]:
+                continue
+            res = cv2.matchTemplate(canvas, tmpl, cv2.TM_CCOEFF_NORMED)
+            scores[label] = float(res.max())
+        return scores
+
+    def match_period(self, period_crop: Image.Image) -> Optional[int]:
+        scores = self.period_scores(period_crop)
+        if not scores:
+            return None
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        best_label, best = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else -1.0
+        if best < self.PERIOD_MIN_SCORE or best - runner_up < self.PERIOD_MIN_MARGIN:
+            return None
+        return best_label
+
+    def match_digit(self, cell: np.ndarray) -> Optional[str]:
+        scores = {d: self._zncc(cell, t) for d, t in self.digit_templates.items()}
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        best_d, best = ranked[0]
+        if best < self.DIGIT_MIN_SCORE or best - ranked[1][1] < self.DIGIT_MIN_MARGIN:
+            return None
+        return best_d
+
+    def match_clock(self, clock_crop: Image.Image) -> Optional[float]:
+        if not self.has_digit_templates:
+            return None
+        cells = self.clock_digit_cells(clock_crop)
+        if cells is None:
+            return None
+        digits = []
+        for cell in cells:
+            d = self.match_digit(cell)
+            if d is None:
+                return None
+            digits.append(d)
+        text = "".join(digits)
+        return parse_clock_string(f"{text[:-2]}:{text[-2:]}")
 
 
 class ScoreboardOCR:
@@ -296,9 +518,12 @@ class ScoreboardOCR:
     Supports both Tesseract OCR and BuiltinDigitMatcher fallback.
     """
 
-    def __init__(self, tesseract_cmd: Optional[str] = None):
+    def __init__(self, tesseract_cmd: Optional[str] = None, preset: str = "blackbear"):
         self.has_tesseract = HAS_PYTESSERACT
         self.matcher = BuiltinDigitMatcher() if HAS_CV2 else None
+        self.overlay_matcher = (
+            OverlayTemplateMatcher() if HAS_CV2 and preset == "blackbear" else None
+        )
 
         if tesseract_cmd and HAS_PYTESSERACT:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
@@ -360,7 +585,13 @@ class ScoreboardOCR:
 
     def read_clock(self, clock_crop: Image.Image) -> Optional[float]:
         """Read the game clock from an image crop."""
-        # Try built-in fast template matcher first
+        # Real-overlay digit templates are the most reliable source.
+        if self.overlay_matcher is not None:
+            val = self.overlay_matcher.match_clock(clock_crop)
+            if val is not None:
+                return val
+
+        # Fall back to the synthetic-font template matcher
         if self.matcher is not None:
             val = self.matcher.match_clock(clock_crop)
             if val is not None:
@@ -383,7 +614,18 @@ class ScoreboardOCR:
 
     def read_period(self, period_crop: Image.Image) -> Optional[int]:
         """Read period digit from an image crop."""
-        if self.matcher is not None:
+        ambiguous_overlay = False
+        if self.overlay_matcher is not None:
+            val = self.overlay_matcher.match_period(period_crop)
+            if val is not None:
+                return val
+            scores = self.overlay_matcher.period_scores(period_crop)
+            ambiguous_overlay = (
+                bool(scores)
+                and max(scores.values()) >= self.overlay_matcher.PERIOD_MIN_SCORE
+            )
+
+        if self.matcher is not None and not ambiguous_overlay:
             val = self.matcher.match_period(period_crop)
             if val is not None:
                 return val

@@ -87,6 +87,8 @@ class GameTimelineTracker:
     MAX_IMPLAUSIBLE_STREAK = 3
     # Consecutive readings required to treat a pending end as false / as a new game.
     RESUME_CONFIRM_COUNT = 2
+    # Consecutive identical period readings required before a period is trusted.
+    PERIOD_CONFIRM_COUNT = 2
 
     def __init__(
         self,
@@ -97,6 +99,8 @@ class GameTimelineTracker:
         end_confirm_interval: float = 10.0,
         enable_end_confirm: bool = True,
         max_resume_clock: float = 300.0,
+        min_period_start_clock: float = 480.0,
+        start_gap_reset: float = 300.0,
     ):
         self.buffer_before = buffer_before
         self.buffer_after = buffer_after
@@ -105,6 +109,12 @@ class GameTimelineTracker:
         self.end_confirm_interval = end_confirm_interval
         self.enable_end_confirm = enable_end_confirm
         self.max_resume_clock = max_resume_clock
+        # A Period 1 clock must be seen at or above this value (a full period
+        # start, e.g. 15:00) before a countdown is accepted as the puck drop.
+        self.min_period_start_clock = min_period_start_clock
+        # While searching for the start, an overlay absence at least this long
+        # (e.g. the break between two games) discards any start candidate.
+        self.start_gap_reset = start_gap_reset
 
         self.state = GameState.SEARCHING_START
         self.events: List[TimelineEvent] = []
@@ -134,6 +144,17 @@ class GameTimelineTracker:
         self.pending_newgame_streak = 0
         self.false_end_count = 0
 
+        # Period consensus tracking (guards against single-frame OCR misreads)
+        self.confirmed_period: Optional[int] = None
+        self.period_run_value: Optional[int] = None
+        self.period_run_count = 0
+        self.period_run_start: Optional[float] = None
+
+        # Start-search bookkeeping
+        self.previous_game_noted = False
+        self.low_p1_clock_noted = False
+        self.absent_since: Optional[float] = None
+
         # Flags for complete game requirements
         self.p1_observed = False
         self.p2_observed = False
@@ -153,6 +174,46 @@ class GameTimelineTracker:
         self.events.append(event)
 
     # -----------------------------------------------------------------
+    # Period consensus and start-candidate helpers
+    # -----------------------------------------------------------------
+    def _update_period(self, reading: ScoreboardReading) -> Optional[int]:
+        """
+        Feed a raw period reading into the consensus tracker and return the
+        confirmed period. A period is only trusted after it has been read
+        PERIOD_CONFIRM_COUNT times in a row, so a single misread digit can
+        neither advance the game nor fake a new game's Period 1.
+        """
+        period = reading.period
+        if period is None:
+            return self.confirmed_period
+        if period == self.period_run_value:
+            self.period_run_count += 1
+        else:
+            self.period_run_value = period
+            self.period_run_count = 1
+            self.period_run_start = reading.timestamp
+        if self.period_run_count >= self.PERIOD_CONFIRM_COUNT:
+            self.confirmed_period = period
+        return self.confirmed_period
+
+    def _reset_period_votes(self) -> None:
+        self.confirmed_period = None
+        self.period_run_value = None
+        self.period_run_count = 0
+        self.period_run_start = None
+
+    def _reset_start_candidate(self) -> None:
+        """Forget any Period 1 start candidate collected while searching."""
+        self.p1_observed = False
+        self.p1_candidate_start = None
+        self.p1_max_clock = None
+        self.low_p1_clock_noted = False
+
+    def _period_event_time(self, ts: float) -> float:
+        """Timestamp of the first reading in the run that confirmed a period."""
+        return self.period_run_start if self.period_run_start is not None else ts
+
+    # -----------------------------------------------------------------
     # Clock plausibility filtering
     # -----------------------------------------------------------------
     def _accept_clock(self, reading: ScoreboardReading) -> Optional[float]:
@@ -170,7 +231,7 @@ class GameTimelineTracker:
             return None
 
         ts = reading.timestamp
-        period = reading.period
+        period = reading.period if reading.period == self.confirmed_period else None
 
         baseline_known = (
             self.last_accepted_clock is not None
@@ -302,8 +363,9 @@ class GameTimelineTracker:
         raw_clock = reading.clock_seconds if reading.present else None
 
         if raw_clock is not None:
-            if raw_clock > self.max_resume_clock:
-                # A full period clock means the feed moved on to another game.
+            if raw_clock > self.max_resume_clock and reading.period == 1:
+                # Two consecutive full-clock Period 1 readings indicate the next
+                # game has started, so the pending horn belongs to the prior game.
                 self.pending_resume_streak = 0
                 self.pending_newgame_streak += 1
                 if self.pending_newgame_streak >= self.RESUME_CONFIRM_COUNT:
@@ -311,6 +373,8 @@ class GameTimelineTracker:
                         ts, "a new game's clock appeared", reading
                     )
             elif raw_clock > self.CLOCK_END_THRESHOLD:
+                # Outside the Period 1 new-game case, resumed clocks mean the
+                # 0:00 candidate was a false end in the current game.
                 self.pending_newgame_streak = 0
                 self.pending_resume_streak += 1
                 if self.pending_resume_streak >= self.RESUME_CONFIRM_COUNT:
@@ -344,6 +408,65 @@ class GameTimelineTracker:
             self._confirm_pending_end(ts, "no further footage to check")
         return self.state == GameState.GAME_COMPLETE
 
+    def _track_p1_candidate(
+        self,
+        reading: ScoreboardReading,
+        clock: Optional[float],
+        period_confirmed: bool,
+    ) -> None:
+        """
+        Collect evidence for the opening puck drop from Period 1 readings.
+
+        Only a clock seen at a full-period value (>= min_period_start_clock,
+        e.g. 15:00) can seed a candidate; a Period 1 reading at a low clock is
+        far more likely a previous game's late period than a new game. The
+        puck drop is the first confirmed Period 1 reading counting down from
+        the highest full-period clock observed.
+        """
+        ts = reading.timestamp
+        if clock is None:
+            if self.p1_candidate_start is None and period_confirmed:
+                self.p1_observed = True
+                self.p1_candidate_start = ts
+                self.add_event(ts, "Period 1 scoreboard detected", reading)
+            return
+
+        if self.p1_max_clock is None or self.p1_max_clock < self.min_period_start_clock:
+            if clock < self.min_period_start_clock:
+                if period_confirmed and not self.low_p1_clock_noted:
+                    self.low_p1_clock_noted = True
+                    self.add_event(
+                        ts,
+                        f"Period 1 clock at {format_clock(clock)} is below a full "
+                        f"period start ({format_clock(self.min_period_start_clock)}"
+                        "); not treating it as a game start",
+                        reading,
+                    )
+                return
+            self.p1_max_clock = clock
+            self.p1_observed = True
+            self.previous_game_noted = False
+            if self.p1_candidate_start is None:
+                self.p1_candidate_start = ts
+                self.add_event(
+                    ts,
+                    f"Period 1 scoreboard detected (Clock: {reading.clock_formatted})",
+                    reading,
+                )
+            return
+
+        if clock > self.p1_max_clock:
+            self.p1_max_clock = clock
+        elif period_confirmed and clock < self.p1_max_clock:
+            self.puck_drop_time = ts
+            self.state = GameState.P1_RUNNING
+            self.add_event(
+                ts,
+                "Opening puck drop detected! Clock started counting down "
+                f"({reading.clock_formatted})",
+                reading,
+            )
+
     def process_reading(self, reading: ScoreboardReading) -> bool:
         """
         Process a single scoreboard reading.
@@ -353,10 +476,10 @@ class GameTimelineTracker:
             return True
 
         ts = reading.timestamp
-        clock = self._accept_clock(reading) if reading.present else None
-
         if self.state == GameState.PENDING_GAME_END:
             if reading.present:
+                clock = self._accept_clock(reading)
+                self.absent_since = None
                 self.last_seen_scoreboard_time = ts
                 if reading.score:
                     self.last_score = reading.score
@@ -368,6 +491,8 @@ class GameTimelineTracker:
 
         # Check if overlay disappeared after Period 3 (or OT)
         if not reading.present:
+            if self.absent_since is None:
+                self.absent_since = ts
             if self.p3_observed and self.final_horn_time is None:
                 # If scoreboard disappears after Period 3 has been running
                 # and clock was low or already at/near end
@@ -383,8 +508,30 @@ class GameTimelineTracker:
             return False
 
         # Scoreboard is present
+        gap = ts - self.absent_since if self.absent_since is not None else 0.0
+        self.absent_since = None
         self.last_seen_scoreboard_time = ts
-        period = reading.period
+        if gap >= self.start_gap_reset:
+            # A long overlay absence separates games: old period votes and
+            # (while searching) any start candidate no longer apply.
+            self._reset_period_votes()
+            self.last_accepted_clock = None
+            self.last_accepted_clock_time = None
+            self.last_accepted_period = None
+            self.implausible_streak = 0
+            if self.state == GameState.SEARCHING_START:
+                if self.p1_observed:
+                    self.add_event(
+                        ts,
+                        f"Scoreboard returned after a {int(gap)}s gap; "
+                        "discarding the earlier Period 1 candidate",
+                        reading,
+                    )
+                self._reset_start_candidate()
+                self.previous_game_noted = False
+
+        period = self._update_period(reading)
+        clock = self._accept_clock(reading)
         score = reading.score or self.last_score
 
         if reading.score:
@@ -392,44 +539,25 @@ class GameTimelineTracker:
 
         # -------------------------------------------------------------
         # STATE 1: SEARCHING_START
-        # Must locate Period 1 start. If scoreboard shows Period 2/3
-        # without P1, this is an incomplete previous game -> skip it!
+        # Must locate a genuine Period 1 start. A confirmed Period 2/3/OT
+        # means a previous game is still in progress -> skip it!
         # -------------------------------------------------------------
         if self.state == GameState.SEARCHING_START:
-            if period is not None and period > 1 and not self.p1_observed:
-                # Mid-game from previous match -> ignore
+            if period is not None and period > 1:
+                if self.p1_observed or not self.previous_game_noted:
+                    label = "Overtime" if period >= 4 else f"Period {period}"
+                    self.add_event(
+                        self._period_event_time(ts),
+                        f"{label} of a game already in progress detected; "
+                        "waiting for a new Period 1",
+                        reading,
+                    )
+                    self.previous_game_noted = True
+                self._reset_start_candidate()
                 return False
 
-            if period == 1:
-                self.p1_observed = True
-                if clock is not None:
-                    if self.p1_max_clock is None or clock > self.p1_max_clock:
-                        self.p1_max_clock = clock
-
-                    # Check if clock is at the initial period time (e.g. 15:00 or 12:00 or 20:00)
-                    if self.p1_candidate_start is None:
-                        self.p1_candidate_start = ts
-                        self.add_event(
-                            ts,
-                            f"Period 1 scoreboard detected (Clock: {reading.clock_formatted})",
-                            reading,
-                        )
-
-                    # Clock begins countdown when it is lower than the initial observed period clock
-                    # or drops below standard threshold (e.g., < 15:00, or < max_clock)
-                    if self.p1_max_clock is not None and clock < self.p1_max_clock:
-                        self.puck_drop_time = ts
-                        self.state = GameState.P1_RUNNING
-                        self.add_event(
-                            ts,
-                            f"Opening puck drop detected! Clock started counting down ({reading.clock_formatted})",
-                            reading,
-                        )
-                else:
-                    # Scoreboard detected in P1 without readable clock yet
-                    if self.p1_candidate_start is None:
-                        self.p1_candidate_start = ts
-                        self.add_event(ts, "Period 1 scoreboard detected", reading)
+            if reading.period == 1:
+                self._track_p1_candidate(reading, clock, period == 1)
 
         # -------------------------------------------------------------
         # STATE 2: P1_RUNNING
@@ -439,8 +567,24 @@ class GameTimelineTracker:
                 self.p2_observed = True
                 self.state = GameState.P2_RUNNING
                 self.add_event(
-                    ts, f"Period 2 began (Score: {score or 'unknown'})", reading
+                    self._period_event_time(ts),
+                    f"Period 2 began (Score: {score or 'unknown'})",
+                    reading,
                 )
+            elif period is not None and period >= 3:
+                # Period 3/OT straight after "Period 1" means the start was a
+                # previous game's period misread as Period 1.
+                self.add_event(
+                    self._period_event_time(ts),
+                    f"Period {period} seen before Period 2; discarding the "
+                    "false puck drop and searching for a new Period 1",
+                    reading,
+                )
+                self.state = GameState.SEARCHING_START
+                self.puck_drop_time = None
+                self._reset_start_candidate()
+                self.previous_game_noted = True
+                return False
             elif (
                 period == 1 and clock is not None and clock <= self.CLOCK_END_THRESHOLD
             ):
@@ -455,7 +599,9 @@ class GameTimelineTracker:
                 self.p2_observed = True
                 self.state = GameState.P2_RUNNING
                 self.add_event(
-                    ts, f"Period 2 began (Score: {score or 'unknown'})", reading
+                    self._period_event_time(ts),
+                    f"Period 2 began (Score: {score or 'unknown'})",
+                    reading,
                 )
 
         # -------------------------------------------------------------
@@ -466,7 +612,9 @@ class GameTimelineTracker:
                 self.p3_observed = True
                 self.state = GameState.P3_RUNNING
                 self.add_event(
-                    ts, f"Period 3 began (Score: {score or 'unknown'})", reading
+                    self._period_event_time(ts),
+                    f"Period 3 began (Score: {score or 'unknown'})",
+                    reading,
                 )
             elif (
                 period == 2 and clock is not None and clock <= self.CLOCK_END_THRESHOLD
@@ -482,7 +630,9 @@ class GameTimelineTracker:
                 self.p3_observed = True
                 self.state = GameState.P3_RUNNING
                 self.add_event(
-                    ts, f"Period 3 began (Score: {score or 'unknown'})", reading
+                    self._period_event_time(ts),
+                    f"Period 3 began (Score: {score or 'unknown'})",
+                    reading,
                 )
 
         # -------------------------------------------------------------
@@ -490,7 +640,12 @@ class GameTimelineTracker:
         # -------------------------------------------------------------
         elif self.state == GameState.P3_RUNNING:
             # Check for clock hitting 0:00 in Period 3
-            if clock is not None and clock <= self.CLOCK_END_THRESHOLD:
+            if (
+                reading.period == 3
+                and period == 3
+                and clock is not None
+                and clock <= self.CLOCK_END_THRESHOLD
+            ):
                 # Check score tie condition
                 is_tied = False
                 if score is not None and score[0] == score[1]:
@@ -517,13 +672,19 @@ class GameTimelineTracker:
                 # Direct transition to OT observed
                 self.ot_observed = True
                 self.state = GameState.OT_RUNNING
-                self.add_event(ts, "Overtime period began", reading)
+                self.add_event(
+                    self._period_event_time(ts), "Overtime period began", reading
+                )
 
         # -------------------------------------------------------------
         # STATE 7: OT_RUNNING
         # -------------------------------------------------------------
         elif self.state == GameState.OT_RUNNING:
-            if clock is not None and clock <= self.CLOCK_END_THRESHOLD:
+            if (
+                reading.period == 4
+                and clock is not None
+                and clock <= self.CLOCK_END_THRESHOLD
+            ):
                 return self._begin_pending_end(
                     ts, ts, "Overtime clock reached 0:00.", reading
                 )

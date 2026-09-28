@@ -5,6 +5,7 @@ Tests for ScoreboardDetector presence check and ROI configuration.
 import unittest
 from PIL import Image, ImageDraw
 from hockey_trimmer.detector import ScoreboardDetector
+from hockey_trimmer.ocr import HAS_CV2
 
 
 class TestScoreboardDetector(unittest.TestCase):
@@ -43,6 +44,18 @@ class TestScoreboardDetector(unittest.TestCase):
         reading = detector.analyze_frame(self.sb_frame, timestamp=42.0)
         self.assertTrue(reading.present)
         self.assertEqual(reading.timestamp, 42.0)
+
+    @unittest.skipUnless(HAS_CV2, "OpenCV is required for template matching")
+    def test_template_ocr_is_selected_only_for_blackbear(self):
+        self.assertIsNotNone(ScoreboardDetector("blackbear").ocr.overlay_matcher)
+        for preset in ("top_left", "top_center"):
+            with self.subTest(preset=preset):
+                detector = ScoreboardDetector(preset)
+                self.assertIsNone(detector.ocr.overlay_matcher)
+                self.assertIsNotNone(detector.ocr.matcher)
+
+        custom = ScoreboardDetector("blackbear", custom_roi=(0.1, 0.1, 0.3, 0.3))
+        self.assertIsNotNone(custom.ocr.overlay_matcher)
 
 
 if __name__ == "__main__":

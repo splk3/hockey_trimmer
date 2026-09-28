@@ -72,7 +72,7 @@ class ScoreboardDetector:
         if custom_roi is not None:
             self.config["full_roi"] = custom_roi
 
-        self.ocr = ocr or ScoreboardOCR()
+        self.ocr = ocr if ocr is not None else ScoreboardOCR(preset=self.preset_name)
 
     def _get_pixel_bbox(
         self,

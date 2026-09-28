@@ -81,6 +81,7 @@ temp_frames/
 *.png
 !tests/fixtures/*.png
 !assets/*.png
+!hockey_trimmer/assets/blackbear/*.png
 
 # IDE and OS files
 .DS_Store
@@ -92,4 +93,5 @@ Thumbs.db
 *~
 
 # Temporary space for test video storage
-/temp_videos/
+temp_videos/
+temp_frames/
