@@ -409,6 +409,70 @@ class TestEndOfGameConfirmation(unittest.TestCase):
         )
         return tracker
 
+    def test_unknown_terminal_tab_requires_confirmation_and_detects_resumption(self):
+        for terminal_period in (3, 4):
+            with self.subTest(period=terminal_period):
+                tracker = GameTimelineTracker()
+                self._advance_to_p3(tracker, p3_clock=60)
+                if terminal_period == 4:
+                    for ts in (3010, 3020):
+                        tracker.process_reading(ScoreboardReading(True, ts, 4, 60))
+                    self.assertTrue(tracker.ot_observed)
+                tracker.process_reading(ScoreboardReading(True, 3080, None, 0))
+                self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+                self.assertIsNone(tracker.final_horn_time)
+                # An operator resets the clock; this was not the final horn.
+                for ts in (3090, 3100):
+                    tracker.process_reading(ScoreboardReading(True, ts, None, 60))
+                self.assertEqual(tracker.false_end_count, 1)
+                self.assertEqual(
+                    tracker.state,
+                    (
+                        GameState.P3_RUNNING
+                        if terminal_period == 3
+                        else GameState.OT_RUNNING
+                    ),
+                )
+                tracker.process_reading(ScoreboardReading(True, 3170, None, 0))
+                self.assertEqual(tracker.state, GameState.PENDING_GAME_END)
+                tracker.process_reading(ScoreboardReading(True, 3310, None, 0))
+                self.assertIsNone(tracker.final_horn_time)
+                self.assertTrue(
+                    tracker.process_reading(ScoreboardReading(True, 3320, None, 0))
+                )
+                self.assertEqual(tracker.final_horn_time, 3170)
+
+    def test_unknown_period_cannot_establish_terminal_context(self):
+        tracker = GameTimelineTracker()
+        for ts in (0, 10):
+            tracker.process_reading(ScoreboardReading(True, ts, 1, 900))
+        tracker.process_reading(ScoreboardReading(True, 20, 1, 890))
+        for ts in (1000, 1010, 1200):
+            tracker.process_reading(ScoreboardReading(True, ts, None, 0))
+        self.assertEqual(tracker.state, GameState.INTERMISSION_1)
+        self.assertIsNone(tracker.pending_end_time)
+        self.assertFalse(tracker.get_boundaries().game_found)
+
+    def test_tied_regulation_zero_with_unknown_tab_is_not_overtime_horn(self):
+        tracker = GameTimelineTracker()
+        self._advance_to_p3(tracker, p3_clock=10)
+        tracker.process_reading(ScoreboardReading(True, 3010, 3, 0, (1, 1)))
+        self.assertEqual(tracker.state, GameState.OT_RUNNING)
+        self.assertFalse(tracker.ot_observed)
+        for ts in (3020, 3030, 3200):
+            tracker.process_reading(ScoreboardReading(True, ts, None, 0))
+        self.assertIsNone(tracker.pending_end_time)
+        self.assertIsNone(tracker.final_horn_time)
+
+    def test_known_regulation_tab_cannot_end_established_overtime(self):
+        tracker = GameTimelineTracker()
+        self._advance_to_p3(tracker, p3_clock=60)
+        for ts in (3010, 3020):
+            tracker.process_reading(ScoreboardReading(True, ts, 4, 60))
+        tracker.process_reading(ScoreboardReading(True, 3080, 3, 0))
+        self.assertEqual(tracker.state, GameState.OT_RUNNING)
+        self.assertIsNone(tracker.pending_end_time)
+
     def test_false_end_during_timeout_is_rejected(self):
         """A stoppage misread as 0:00 must not end the game; the real horn is used."""
         tracker = GameTimelineTracker(

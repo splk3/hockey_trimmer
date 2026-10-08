@@ -34,5 +34,9 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run unit and integration tests
+        env:
+          CI: "true"
         run: |
+          ffprobe -version > /dev/null
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E '(^|[[:space:]])libx264([[:space:]]|$)' > /dev/null
           python -m unittest discover -s tests -v

@@ -6,11 +6,23 @@ import argparse
 import os
 import sys
 import time
-from typing import Optional
+from dataclasses import dataclass, replace
+from typing import Callable, Literal, Optional
 
-from .detector import ScoreboardDetector
+from .detector import ScoreboardDetector, ScoreboardReading
 from .timeline import GameTimelineTracker, GameBoundaries, GameState
 from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
+
+AnalysisPhase = Literal["scan", "refine_start", "refine_end"]
+
+
+@dataclass(frozen=True)
+class AnalysisObservation:
+    """An extraction attempt, before its reading reaches the timeline."""
+
+    phase: AnalysisPhase
+    timestamp: float
+    reading: Optional[ScoreboardReading]
 
 
 def format_seconds(seconds: float) -> str:
@@ -36,6 +48,7 @@ def analyze_video(
     end_confirm_window: float = 150.0,
     end_confirm_interval: float = 10.0,
     enable_end_confirm: bool = True,
+    observer: Optional[Callable[[AnalysisObservation], None]] = None,
 ) -> GameBoundaries:
     """
     Scans video to identify the first complete hockey game and its cut boundaries.
@@ -74,6 +87,21 @@ def analyze_video(
         enable_end_confirm=enable_end_confirm,
     )
 
+    def read_frame(
+        timestamp: float, phase: AnalysisPhase
+    ) -> Optional[ScoreboardReading]:
+        frame = extract_frame_at_timestamp(video_path, timestamp)
+        reading = (
+            detector.analyze_frame(frame, timestamp) if frame is not None else None
+        )
+        if observer is not None:
+            observer(
+                AnalysisObservation(
+                    phase, timestamp, replace(reading) if reading is not None else None
+                )
+            )
+        return reading
+
     t_curr = 0.0
     sample_idx = 0
     start_time_proc = time.time()
@@ -85,9 +113,8 @@ def analyze_video(
 
     while t_curr < duration:
         step = sample_interval
-        frame = extract_frame_at_timestamp(video_path, t_curr)
-        if frame is not None:
-            reading = detector.analyze_frame(frame, t_curr)
+        reading = read_frame(t_curr, "scan")
+        if reading is not None:
             is_complete = timeline.process_reading(reading)
 
             if verbose and reading.present:
@@ -138,9 +165,8 @@ def analyze_video(
             refine_start = max(0.0, timeline.puck_drop_time - sample_interval)
             refine_end = timeline.puck_drop_time + sample_interval
             for ts in [refine_start + i for i in range(int(refine_end - refine_start))]:
-                f = extract_frame_at_timestamp(video_path, ts)
-                if f:
-                    r = detector.analyze_frame(f, ts)
+                r = read_frame(ts, "refine_start")
+                if r is not None:
                     if r.present and r.period == 1 and r.clock_seconds is not None:
                         if (
                             timeline.p1_max_clock
@@ -151,19 +177,19 @@ def analyze_video(
                             break
 
         # Refine final horn time. Require two consecutive low readings so a
-        # single OCR misread cannot pull the final horn earlier.
+        # single OCR misread cannot pull the final horn earlier. An unknown
+        # tab may use the terminal-period context already confirmed by the scan.
         if timeline.final_horn_time is not None:
             refine_start = max(0.0, timeline.final_horn_time - sample_interval)
             refine_end = min(duration, timeline.final_horn_time + sample_interval)
             zero_run_start = None
             for ts in [refine_start + i for i in range(int(refine_end - refine_start))]:
-                f = extract_frame_at_timestamp(video_path, ts)
-                if not f:
+                r = read_frame(ts, "refine_end")
+                if r is None:
                     continue
-                r = detector.analyze_frame(f, ts)
                 is_zero = (
                     r.present
-                    and r.period in (3, 4)
+                    and r.period in (None, 3, 4)
                     and r.clock_seconds is not None
                     and r.clock_seconds <= 1.0
                 )

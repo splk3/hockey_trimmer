@@ -640,8 +640,10 @@ class GameTimelineTracker:
         # -------------------------------------------------------------
         elif self.state == GameState.P3_RUNNING:
             # Check for clock hitting 0:00 in Period 3
+            # Unknown tabs retain established terminal-period context, but a
+            # contradictory readable period must not trigger a final horn.
             if (
-                reading.period == 3
+                reading.period in (None, 3)
                 and period == 3
                 and clock is not None
                 and clock <= self.CLOCK_END_THRESHOLD
@@ -680,8 +682,13 @@ class GameTimelineTracker:
         # STATE 7: OT_RUNNING
         # -------------------------------------------------------------
         elif self.state == GameState.OT_RUNNING:
+            if period == 4 and reading.period == 4:
+                self.ot_observed = True
             if (
-                reading.period == 4
+                (
+                    reading.period == 4
+                    or (reading.period is None and period == 4 and self.ot_observed)
+                )
                 and clock is not None
                 and clock <= self.CLOCK_END_THRESHOLD
             ):
