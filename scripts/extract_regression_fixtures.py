@@ -75,11 +75,19 @@ def staged_directory(output, replace=False):
 
 
 def prepare(videos_dir, output, trace_dir=None, replace=False):
-    if Path(output).exists() and not replace:
-        raise FileExistsError(f"Refusing to replace {output}; use --replace")
+    output = Path(output).resolve()
     paths = sorted(Path(videos_dir).glob("*-raw.mp4"))
     if not paths:
         raise ValueError(f"No raw videos in {videos_dir}")
+    inputs = {path.resolve() for path in paths}
+    if trace_dir is not None:
+        inputs.update(
+            (Path(trace_dir) / f"{path.stem}.json").resolve() for path in paths
+        )
+    if output in inputs:
+        raise ValueError("Preparation output must not overwrite an input artifact")
+    if output.exists() and not replace:
+        raise FileExistsError(f"Refusing to replace {output}; use --replace")
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "sources": [source_metadata(path) for path in paths],
