@@ -83,6 +83,16 @@ temp_frames/
 !assets/*.png
 !hockey_trimmer/assets/blackbear/*.png
 
+# Only promoted regression fixtures belong in the committed corpus.
+tests/fixtures/regression/*
+!tests/fixtures/regression/manifest.json
+!tests/fixtures/regression/overlays/
+!tests/fixtures/regression/traces/
+tests/fixtures/regression/overlays/*
+!tests/fixtures/regression/overlays/*.png
+tests/fixtures/regression/traces/*
+!tests/fixtures/regression/traces/*.json
+
 # IDE and OS files
 .DS_Store
 Thumbs.db
@@ -95,3 +105,4 @@ Thumbs.db
 # Temporary space for test video storage
 temp_videos/
 temp_frames/
+tmp/

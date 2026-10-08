@@ -129,7 +129,7 @@ def get_keyframes_near(
         "-skip_frame",
         "nokey",
         "-show_entries",
-        "frame=pkt_pts_time,pict_type",
+        "frame=best_effort_timestamp_time",
         "-of",
         "csv=p=0",
         video_path,

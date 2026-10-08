@@ -150,7 +150,9 @@ class _FakeDetector:
 class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
     """End-to-end analyze_video behavior around the final-horn confirmation."""
 
-    def _run(self, duration: float):
+    def _run(
+        self, duration: float, observer=None, fine_refine=False, detector=_FakeDetector
+    ):
         info = VideoInfo(
             path="game.mp4",
             duration=duration,
@@ -165,15 +167,53 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
         ), patch(
             "hockey_trimmer.cli.extract_frame_at_timestamp", return_value=object()
         ), patch(
-            "hockey_trimmer.cli.ScoreboardDetector", _FakeDetector
+            "hockey_trimmer.cli.ScoreboardDetector", detector
         ), patch(
             "sys.stdout", io.StringIO()
         ):
             return analyze_video(
                 "game.mp4",
                 sample_interval=50.0,
-                fine_refine=False,
+                fine_refine=fine_refine,
+                observer=observer,
             )
+
+    def test_observer_records_all_phases_without_changing_result(self):
+        observations = []
+        expected = self._run(3400, fine_refine=True)
+        actual = self._run(3400, observations.append, fine_refine=True)
+        self.assertEqual(actual, expected)
+        phases = [event.phase for event in observations]
+        self.assertIn("scan", phases)
+        self.assertIn("refine_start", phases)
+        self.assertIn("refine_end", phases)
+        self.assertEqual(
+            phases, sorted(phases, key=("scan", "refine_start", "refine_end").index)
+        )
+        self.assertTrue(all(e.reading.timestamp == e.timestamp for e in observations))
+        self.assertEqual(
+            [e.timestamp for e in observations if e.phase == "scan"][-4:],
+            [3120, 3130, 3140, 3150],
+        )
+
+    def test_observer_readings_are_isolated(self):
+        expected = self._run(3100)
+        observations = []
+
+        def mutate(event):
+            observations.append(event)
+            event.reading.period = 4
+            event.reading.clock_seconds = 0
+
+        self.assertEqual(self._run(3100, mutate), expected)
+        self.assertTrue(observations)
+
+    def test_observer_failure_propagates(self):
+        def fail(event):
+            raise RuntimeError("observer failed")
+
+        with self.assertRaisesRegex(RuntimeError, "observer failed"):
+            self._run(3400, fail)
 
     def test_misread_zero_does_not_end_game_early(self):
         boundaries = self._run(duration=3400.0)
@@ -198,6 +238,7 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
             audio_codec="aac",
         )
         sampled_timestamps = []
+        observations = []
 
         class _PendingOnFirstReadingTimeline:
             def __init__(self, *args, **kwargs):
@@ -250,10 +291,14 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
                 sample_interval=50.0,
                 end_confirm_interval=10.0,
                 fine_refine=False,
+                observer=observations.append,
             )
 
         self.assertGreaterEqual(len(sampled_timestamps), 3)
         self.assertEqual(sampled_timestamps[:3], [0.0, 10.0, 20.0])
+        self.assertEqual([o.timestamp for o in observations], sampled_timestamps)
+        self.assertIsNotNone(observations[0].reading)
+        self.assertTrue(all(o.reading is None for o in observations[1:]))
 
     def test_final_horn_refine_ignores_low_clock_from_non_p3_periods(self):
         info = VideoInfo(
@@ -341,6 +386,32 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
 
         self.assertEqual(boundaries.final_horn_time, 3000.0)
         self.assertEqual(boundaries.cut_end_time, 3015.0)
+
+    def test_refinement_accepts_unknown_tab_only_after_confirmed_scan_horn(self):
+        class UnknownRefinementDetector(_FakeDetector):
+            def analyze_frame(self, frame, timestamp):
+                reading = super().analyze_frame(frame, timestamp)
+                if timestamp >= 2950:
+                    reading.period = None
+                return reading
+
+        observations = []
+        boundaries = self._run(
+            3400,
+            observations.append,
+            fine_refine=True,
+            detector=UnknownRefinementDetector,
+        )
+        self.assertEqual(boundaries.final_horn_time, 2999)
+        self.assertEqual(boundaries.cut_end_time, 3014)
+        self.assertEqual(
+            [
+                (e.timestamp, e.reading.period)
+                for e in observations
+                if e.phase == "refine_end"
+            ][-2:],
+            [(2999, None), (3000, None)],
+        )
 
 
 if __name__ == "__main__":

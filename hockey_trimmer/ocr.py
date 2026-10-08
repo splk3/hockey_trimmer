@@ -316,6 +316,10 @@ class OverlayTemplateMatcher:
     PERIOD_SCALE = 4
     PERIOD_MIN_SCORE = 0.55
     PERIOD_MIN_MARGIN = 0.06
+    # Exclude the tab's background and footage above it from glyph correlation.
+    PERIOD_TEMPLATE_INK_BOX = (18, 16, 48, 54)
+    PERIOD_SEARCH_BOX = (35, 4, 54, 18)
+    PERIOD_DIGIT_BOX = (38, 6, 52, 17)
 
     # Canonical size of the clock ROI crop and normalized digit cell size.
     CLOCK_CANVAS = (110, 29)
@@ -403,6 +407,8 @@ class OverlayTemplateMatcher:
                 and area >= 0.03 * bh * bh
                 and y > 0
                 and y + bh < H
+                and x > 0
+                and x + bw < arr.shape[1]
             ):
                 boxes.extend(cls._split_merged_digits(ink, x, y, bw, bh))
         if len(boxes) not in (3, 4):
@@ -469,15 +475,41 @@ class OverlayTemplateMatcher:
         if not HAS_CV2 or not self.period_templates:
             return {}
         canvas = self.period_canvas(period_crop)
+        s = self.PERIOD_SCALE
+        x1, y1, x2, y2 = self.PERIOD_SEARCH_BOX
+        canvas = canvas[y1 * s : y2 * s, x1 * s : x2 * s]
         scores = {}
         for label, tmpl in self.period_templates.items():
+            x1, y1, x2, y2 = self.PERIOD_TEMPLATE_INK_BOX
+            tmpl = tmpl[y1:y2, x1:x2].copy()
             if canvas.shape[0] < tmpl.shape[0] or canvas.shape[1] < tmpl.shape[1]:
                 continue
             res = cv2.matchTemplate(canvas, tmpl, cv2.TM_CCOEFF_NORMED)
             scores[label] = float(res.max())
         return scores
 
+    def unsupported_period(self, period_crop: Image.Image) -> bool:
+        """Reject visible digits outside 1-4 using the existing digit alphabet."""
+        if not HAS_CV2 or not self.has_digit_templates:
+            return False
+        s = self.PERIOD_SCALE
+        x1, y1, x2, y2 = self.PERIOD_DIGIT_BOX
+        glyph = self.period_canvas(period_crop)[y1 * s : y2 * s, x1 * s : x2 * s]
+        _, ink = cv2.threshold(
+            glyph.astype(np.uint8), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        count, _, stats, _ = cv2.connectedComponentsWithStats(ink)
+        if count <= 1:
+            return False
+        x, y, w, h, _ = max(stats[1:], key=lambda box: box[4])
+        digit = self.match_digit(
+            self._normalize_digit(255 - glyph[y : y + h, x : x + w])
+        )
+        return digit is not None and digit not in "1234"
+
     def match_period(self, period_crop: Image.Image) -> Optional[int]:
+        if self.unsupported_period(period_crop):
+            return None
         scores = self.period_scores(period_crop)
         if not scores:
             return None
@@ -616,6 +648,9 @@ class ScoreboardOCR:
         """Read period digit from an image crop."""
         ambiguous_overlay = False
         if self.overlay_matcher is not None:
+            # A recognized operator-error digit must not become a generic guess.
+            if self.overlay_matcher.unsupported_period(period_crop):
+                return None
             val = self.overlay_matcher.match_period(period_crop)
             if val is not None:
                 return val

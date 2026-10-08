@@ -141,6 +141,14 @@ class TestRealOverlayOCR(unittest.TestCase):
         self.assertIsNone(matcher.match_period(blank))
         self.assertIsNone(matcher.match_clock(blank))
 
+    def test_period_confidence_margin_is_not_relaxed(self):
+        matcher = OverlayTemplateMatcher()
+        crop = Image.new("RGB", (83, 17))
+        with patch.object(matcher, "period_scores", return_value={1: 0.7, 3: 0.69}):
+            self.assertIsNone(matcher.match_period(crop))
+        with patch.object(matcher, "period_scores", return_value={1: 0.5, 3: 0.1}):
+            self.assertIsNone(matcher.match_period(crop))
+
     def test_ambiguous_blackbear_period_does_not_become_a_generic_guess(self):
         crop = Image.new("RGB", (83, 17))
         self.ocr.has_tesseract_bin = False

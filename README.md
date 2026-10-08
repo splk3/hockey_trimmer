@@ -276,7 +276,8 @@ options:
 
 ## Running Tests
 
-Run the test suite with standard library `unittest` (zero dependencies):
+After installing the project and development dependencies, run the suite with
+standard-library `unittest`:
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -288,9 +289,112 @@ Or with `pytest`:
 pytest -v
 ```
 
-All 23 unit tests cover CLI parsing, scoreboard presence detection, digit/clock
-parsing, period classification, game timeline state transitions, overtime logic,
-and keyframe snapping.
+Tests cover CLI parsing, scoreboard presence, OCR, game lifecycle transitions,
+overtime, observation capture/replay, and actual FFmpeg extraction and trimming.
+Normal tests use committed fixtures and need no original recordings or network.
+Media integration requires FFmpeg/FFprobe with libx264; missing tools skip that
+class locally and fail in CI.
+
+### Real-footage regression fixtures
+
+**NOTE:** The fixtures information below relies on source data that is not available in this repository - it is meant as reference material for testing on an as-is basis.
+Future improvements may use publicly available video files to assist in recreating and checking images.
+
+`tests/fixtures/regression/manifest.json` records original source metadata and
+SHA256, native-resolution overlay geometry, timestamps, expected labels, review
+notes, and template-training overlap. The committed corpus currently contains
+396 human-reviewed crops and seven reviewed complete-game traces covering
+Igloo, Hawks, McGinty, both MYHA games, PBK, and Ruina at two source resolutions.
+Both held-out and template-training timestamps are identified. Real-game
+coarse/refined replay assertions run offline without a review-gate skip.
+Scores are not labelled in this corpus. Hawks' 31 visible digit5 cases retain
+that literal operator-error annotation; period OCR must abstain rather than
+reinterpret it as Period3 or overtime. Established terminal-period context,
+plausible clocks, and end confirmation still allow tracking the final horn.
+
+Committed PNGs, manifests, and traces have a combined **15 MiB** limit. No source
+or generated video is committed. Overlay crops reconstruct only the detector ROI
+on a native-size test canvas, not the original surrounding footage. Trace replay
+checks timeline/orchestration behavior, not OCR; visual tests check OCR separately.
+Training samples are tagged and must not be mistaken for held-out benchmarks.
+
+Prepare candidate crops and contact sheets from the seven `*-raw.mp4` sources in
+the ignored `temp_videos/` directory:
+
+```bash
+python scripts/extract_regression_fixtures.py prepare \
+  --output temp_frames/regression/candidates.json
+python scripts/extract_regression_fixtures.py extract \
+  --manifest temp_frames/regression/candidates.json \
+  --output temp_frames/regression/draft
+```
+
+Capture a source's actual adaptive scan and one-second refinement observations:
+
+```bash
+python scripts/record_game_trace.py \
+  --input temp_videos/20260906-ducks12aa-njavalanche12aa-igloo-raw.mp4 \
+  --output temp_frames/regression/traces/20260906-ducks12aa-njavalanche12aa-igloo-raw.json
+```
+
+Repeat for each raw source. To add transition/refinement candidates and copy
+traces into a new draft, run `prepare` and `extract` with
+`--trace-dir temp_frames/regression/traces`. The trace filenames must match the
+raw video stems. Keep predictions and `baseline` results separate from labels:
+
+1. Inspect contact sheets and native crops; inspect source footage around opening
+   countdown, period transitions, and final-horn confirmation.
+2. Set each verified sample's `expected` fields, `review_status: "reviewed"`,
+   descriptive `category`, and `review_note`. An omitted expected field means
+   unlabelled; explicit `null` means the OCR must abstain.
+3. For each verified trace, supply `expected.coarse` and `expected.refined` with
+   `game_found`, `puck_drop_time`, `final_horn_time`, `cut_start_time`, and
+   `cut_end_time`. Supply nonnegative numeric tolerances for the four time fields
+   in both `tolerances.coarse` and `tolerances.refined`, then set its review status
+   and note. Coarse replay excludes refinement observations; refined replay
+   requires every recorded phase/timestamp exactly.
+4. Compare reviewed boundaries with a normal source `--check` run. Do not copy
+   current predictions into expectations without independent review.
+
+After an OCR or sampling change, refresh observations from the original footage
+before promotion. Frozen replay readings cannot reflect an OCR fix. Add
+`--review-from path/to/reviewed-trace.json` when recording to preserve independent
+expectations, tolerances, reviewed intervals, and the original observed baseline.
+Source identity and analysis settings must match; recording never replaces
+reviewed truth with current predictions. Use a separate output or explicit
+`--replace`, then compare both coarse and refined results with the saved review.
+
+Promote only reviewed assets (drafts are intentionally filtered out):
+
+```bash
+python scripts/extract_regression_fixtures.py promote \
+  --manifest temp_frames/regression/draft/manifest.json \
+  --output tests/fixtures/regression --replace
+python -m unittest tests.test_regression tests.test_regression_tools \
+  tests.test_media_integration -v
+```
+
+Commands refuse existing outputs unless `--replace` is explicit. Extraction and
+promotion stage and validate outputs before replacing a corpus; invalid hashes,
+geometry, labels, missing frames, or an exceeded budget leave it unchanged.
+Promotion replaces the whole destination, so preserve existing reviewed entries
+in the draft before promoting.
+
+For optional **original-footage** smoke clips, edit the manifest's `clips`
+recipes (`id`, `source`, `start`, `duration`, and purpose) and run:
+
+```bash
+python scripts/extract_regression_fixtures.py clips \
+  --manifest temp_frames/regression/draft/manifest.json \
+  --output temp_frames/regression/source_clips
+```
+
+These clips preserve source resolution and audio when present and use exact-start
+re-encoding. They are local review assets, not complete-game fixtures. CI instead
+generates an eight-second **crop-derived** clip in a temporary directory, asserts
+real keyframes and stream-copy/no-snap/re-encode trimming with audio, and cleans
+it up. It never compresses a full game's clock into a short clip or weakens
+tracker defaults. Full games retain original timestamps in trace replay.
 
 ---
 
