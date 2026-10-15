@@ -1,6 +1,6 @@
 # NumPy 2.5 supports Python 3.12+; retain Python 3.10/3.11 support with the
 # a compatible NumPy release on older interpreters.
-numpy>=2.5.3; python_version >= "3.12"
+numpy>=2.5.4; python_version >= "3.12"
 numpy>=2.2.6; python_version < "3.12"
 pillow>=12.3.0
 pytesseract>=0.3.13
