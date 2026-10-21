@@ -38,6 +38,7 @@ class TestMediaIntegration(unittest.TestCase):
                 for line in encoders.splitlines()
                 if len(fields := line.split()) >= 2
             }
+            cls.available_encoders = available
             missing.extend(
                 f"{encoder} encoder"
                 for encoder in ("libx264", "aac")
@@ -154,6 +155,85 @@ class TestMediaIntegration(unittest.TestCase):
                 self.assertIsNotNone(end)
                 self.assertGreater(
                     end.getpixel((info.width // 2, info.height // 2))[0], red + 20
+                )
+
+    def test_hevc_trim_with_and_without_audio(self):
+        if "libx265" not in self.available_encoders:
+            message = "HEVC media integration requires the libx265 encoder"
+            if os.environ.get("CI"):
+                self.fail(message)
+            self.skipTest(message)
+        silent = Path(self.directory.name) / "silent.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(self.video),
+                "-map",
+                "0:v:0",
+                "-c",
+                "copy",
+                str(silent),
+            ],
+            check=True,
+        )
+        for source, has_audio in ((self.video, True), (silent, False)):
+            with self.subTest(audio=has_audio):
+                original = source.read_bytes()
+                output = Path(self.directory.name) / f"hevc_{has_audio}.mp4"
+                self.assertTrue(
+                    VideoTrimmer(str(source)).trim(str(output), 2.4, 5.4, hevc=True)
+                )
+                self.assertEqual(source.read_bytes(), original)
+                info = probe_video(str(output))
+                self.assertEqual(info.video_codec, "hevc")
+                self.assertEqual(
+                    (info.width, info.height),
+                    (self.source["width"], self.source["height"]),
+                )
+                self.assertAlmostEqual(info.duration, 3, delta=0.15)
+                metadata = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "stream=codec_type,codec_name,codec_tag_string",
+                        "-of",
+                        "json",
+                        str(output),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                streams = json.loads(metadata.stdout)["streams"]
+                self.assertEqual(streams[0]["codec_tag_string"], "hvc1")
+                audio = [s for s in streams if s["codec_type"] == "audio"]
+                self.assertEqual(len(audio), int(has_audio))
+                if has_audio:
+                    self.assertEqual(audio[0]["codec_name"], "aac")
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-xerror",
+                        "-i",
+                        str(output),
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "0:a?",
+                        "-f",
+                        "null",
+                        "-",
+                    ],
+                    capture_output=True,
+                    check=True,
                 )
 
     def test_short_clip_is_not_a_complete_game_or_trimmed_by_check_mode(self):

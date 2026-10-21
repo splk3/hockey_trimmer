@@ -292,10 +292,19 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         action="store_true",
         help="Disable final-horn confirmation and end the game at the first 0:00 clock reading.",
     )
-    parser.add_argument(
+    encoding = parser.add_mutually_exclusive_group()
+    encoding.add_argument(
         "--reencode",
         action="store_true",
-        help="Re-encode video instead of fast stream copy (-c copy).",
+        help=(
+            "Re-encode to H.264 (fast, CRF 18) with AAC audio "
+            "instead of stream copy."
+        ),
+    )
+    encoding.add_argument(
+        "--hevc",
+        action="store_true",
+        help="Re-encode to HEVC (libx265, fast, CRF 21) with unchanged audio.",
     )
     parser.add_argument(
         "--no-keyframe-snap",
@@ -401,6 +410,7 @@ def main(argv: Optional[list] = None) -> int:
         cut_end=boundaries.cut_end_time,
         reencode=args.reencode,
         snap_keyframes=not args.no_keyframe_snap,
+        hevc=args.hevc,
     )
 
     if success:

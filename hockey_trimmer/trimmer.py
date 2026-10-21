@@ -4,6 +4,7 @@ FFmpeg video probing, frame extraction, keyframe snapping, and trimming utilitie
 
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import List, Optional
 import io
@@ -194,19 +195,56 @@ class VideoTrimmer:
         cut_end: float,
         reencode: bool = False,
         snap_keyframes: bool = True,
+        hevc: bool = False,
     ) -> bool:
         """
         Cut video from cut_start to cut_end.
         """
+        if reencode and hevc:
+            raise ValueError("H.264 and HEVC modes are mutually exclusive.")
         actual_start = cut_start
         actual_end = cut_end
 
-        if snap_keyframes and not reencode:
+        if snap_keyframes and not (reencode or hevc):
             actual_start, actual_end = snap_to_keyframes(
                 self.video_path, cut_start, cut_end, window_sec=15.0
             )
 
-        if reencode:
+        if hevc:
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                f"{actual_start:.3f}",
+                "-to",
+                f"{actual_end:.3f}",
+                "-i",
+                self.video_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-map_metadata",
+                "0",
+                "-map_chapters",
+                "0",
+                "-c:v",
+                "libx265",
+                "-preset",
+                "fast",
+                "-crf",
+                "21",
+                "-x265-params",
+                "log-level=error",
+                "-tag:v",
+                "hvc1",
+                "-c:a",
+                "copy",
+                "-fps_mode",
+                "passthrough",
+                output_path,
+            ]
+        elif reencode:
             cmd = [
                 "ffmpeg",
                 "-y",
@@ -249,4 +287,6 @@ class VideoTrimmer:
         res = subprocess.run(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
+        if hevc and res.returncode != 0:
+            print(f"HEVC encoding failed:\n{res.stderr}", file=sys.stderr)
         return res.returncode == 0
