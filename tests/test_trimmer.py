@@ -2,6 +2,7 @@
 Tests for trimmer utility functions and keyframe logic.
 """
 
+import io
 import unittest
 from unittest.mock import patch, MagicMock
 from hockey_trimmer.trimmer import (
@@ -12,6 +13,65 @@ from hockey_trimmer.trimmer import (
 
 
 class TestVideoTrimmer(unittest.TestCase):
+
+    @patch("hockey_trimmer.trimmer.snap_to_keyframes")
+    @patch("hockey_trimmer.trimmer.subprocess.run")
+    @patch("hockey_trimmer.trimmer.probe_video")
+    def test_encoding_modes(self, mock_probe, mock_run, mock_snap):
+        mock_run.return_value = MagicMock(returncode=0)
+        trimmer = VideoTrimmer("game.mp4")
+        for hevc, codec, crf, audio in (
+            (True, "libx265", "21", "copy"),
+            (False, "libx264", "18", "aac"),
+        ):
+            with self.subTest(hevc=hevc):
+                self.assertTrue(
+                    trimmer.trim("out.mp4", 14, 45, reencode=not hevc, hevc=hevc)
+                )
+                cmd = mock_run.call_args.args[0]
+                for flag, value in (
+                    ("-c:v", codec),
+                    ("-preset", "fast"),
+                    ("-crf", crf),
+                    ("-c:a", audio),
+                    ("-ss", "14.000"),
+                    ("-to", "45.000"),
+                ):
+                    self.assertEqual(cmd[cmd.index(flag) + 1], value)
+                if hevc:
+                    for flag, value in (
+                        ("-tag:v", "hvc1"),
+                        ("-fps_mode", "passthrough"),
+                        ("-x265-params", "log-level=error"),
+                        ("-map_metadata", "0"),
+                        ("-map_chapters", "0"),
+                    ):
+                        self.assertEqual(cmd[cmd.index(flag) + 1], value)
+                    self.assertIn("0:v:0", cmd)
+                    self.assertIn("0:a?", cmd)
+                    self.assertNotIn("-b:a", cmd)
+                else:
+                    self.assertEqual(cmd[cmd.index("-b:a") + 1], "192k")
+        mock_snap.assert_not_called()
+
+    @patch("hockey_trimmer.trimmer.subprocess.run")
+    @patch("hockey_trimmer.trimmer.probe_video")
+    def test_conflicting_modes_are_rejected(self, mock_probe, mock_run):
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            VideoTrimmer("game.mp4").trim("out.mp4", 0, 10, reencode=True, hevc=True)
+        mock_run.assert_not_called()
+
+    @patch("hockey_trimmer.trimmer.subprocess.run")
+    @patch("hockey_trimmer.trimmer.probe_video")
+    def test_hevc_failure_reports_ffmpeg_stderr(self, mock_probe, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr="Unknown encoder 'libx265'"
+        )
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            success = VideoTrimmer("game.mp4").trim("out.mp4", 0, 10, hevc=True)
+        self.assertFalse(success)
+        self.assertIn("Unknown encoder 'libx265'", stderr.getvalue())
+        mock_run.assert_called_once()
 
     def test_video_info_dataclass(self):
         info = VideoInfo(

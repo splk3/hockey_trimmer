@@ -93,7 +93,7 @@ The codebase is built around a video-analysis pipeline that samples frames over 
 4. `trimmer.py`
    - Uses FFprobe for video metadata and FFmpeg for frame extraction.
    - Optionally snaps trims to nearby keyframes for fast stream-copy cuts.
-   - Supports either lossless `-c copy` trimming or re-encoding when `--reencode` is used.
+   - Supports lossless `-c copy`, H.264 re-encoding with `--reencode`, or HEVC with `--hevc`.
 
 The test suite mirrors this split with `test_cli.py`, `test_detector.py`, `test_ocr.py`, `test_timeline.py`, and `test_trimmer.py`.
 
@@ -102,7 +102,8 @@ The test suite mirrors this split with `test_cli.py`, `test_detector.py`, `test_
 - Keep the pipeline responsibilities separated: CLI orchestrates, detector inspects frames, timeline decides lifecycle state, trimmer handles ffmpeg operations.
 - Prefer the `--check` mode when validating detection logic; it is the lowest-risk way to inspect boundaries without writing output files.
 - ROI values are normalized to 0.0-1.0 coordinates when passed as `--roi`; detector presets and custom ROIs are interpreted relative to the frame size.
-- The project favors lossless stream-copy trimming by default; keyframe snapping is part of the normal workflow unless `--no-keyframe-snap` or `--reencode` is chosen.
+- The project favors lossless stream-copy trimming by default; keyframe snapping is part of the normal workflow unless `--no-keyframe-snap`, `--reencode`, or `--hevc` is chosen.
+- `--hevc` and `--reencode` are mutually exclusive. HEVC uses libx265 / fast / CRF 21, copied audio, hvc1 tagging, and passthrough frame timing; it writes directly to the requested output, without a second trim copy.
 - A single 0:00 clock reading never ends the game: `GameTimelineTracker` enters `PENDING_GAME_END` and confirms the clock does not resume for `end_confirm_window` seconds (sampled every `end_confirm_interval`). Clock values that drop faster than real elapsed time are rejected as OCR misreads.
 - `analyze_video()` must call `timeline.finalize()` after the scan loop so a candidate final horn is resolved when the footage runs out mid-confirmation.
 - Period and clock OCR for the `blackbear` preset uses `OverlayTemplateMatcher` (ocr.py) with real-overlay templates in `hockey_trimmer/assets/blackbear/`. Rebuild them with `python scripts/build_ocr_templates.py --videos-dir temp_videos` (hand-labelled samples live in that script).

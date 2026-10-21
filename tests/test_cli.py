@@ -30,6 +30,51 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.end_confirm_window, 150.0)
         self.assertEqual(args.end_confirm_interval, 10.0)
         self.assertFalse(args.no_end_confirm)
+        self.assertFalse(args.hevc)
+        self.assertFalse(args.reencode)
+
+    def test_hevc_arguments(self):
+        args = parse_args(["-i", "game.mp4", "-o", "out.mp4", "--hevc"])
+        self.assertTrue(args.hevc)
+        self.assertFalse(args.reencode)
+        with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            parse_args(["-i", "game.mp4", "--hevc", "--reencode"])
+
+    @patch("hockey_trimmer.cli.os.path.getsize", return_value=1000)
+    @patch("hockey_trimmer.cli.VideoTrimmer")
+    @patch("hockey_trimmer.cli.analyze_video")
+    def test_main_hevc(self, mock_analyze, mock_trimmer, mock_size):
+        boundaries = GameBoundaries(
+            game_found=True,
+            puck_drop_time=10,
+            final_horn_time=100,
+            cut_start_time=0,
+            cut_end_time=110,
+        )
+        mock_analyze.return_value = boundaries
+        with patch("sys.stdout", io.StringIO()):
+            result = main(["-i", "game.mp4", "-o", "out.mp4", "--hevc"])
+        self.assertEqual(result, 0)
+        mock_trimmer.return_value.trim.assert_called_once_with(
+            output_path="out.mp4",
+            cut_start=0,
+            cut_end=110,
+            reencode=False,
+            snap_keyframes=True,
+            hevc=True,
+        )
+        mock_trimmer.reset_mock()
+        with patch("sys.stdout", io.StringIO()):
+            self.assertEqual(main(["-i", "game.mp4", "--hevc", "--check"]), 0)
+        mock_trimmer.assert_not_called()
+
+        mock_trimmer.return_value.trim.return_value = False
+        with patch("sys.stdout", io.StringIO()), patch(
+            "sys.stderr", new_callable=io.StringIO
+        ) as stderr:
+            result = main(["-i", "game.mp4", "-o", "out.mp4", "--hevc"])
+        self.assertEqual(result, 1)
+        self.assertIn("FFmpeg failed", stderr.getvalue())
 
     def test_parse_args_end_confirmation_options(self):
         args = parse_args(

@@ -195,6 +195,26 @@ timestamps:
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --reencode
 ```
 
+For smaller files, encode the detected game directly to HEVC instead:
+
+```bash
+python hockey_trimmer.py -i game_raw.mp4 -o game_hevc.mp4 --hevc
+```
+
+`--hevc` requires FFmpeg with **libx265** and uses the evaluated fixed settings:
+`-preset fast -crf 21`, copied audio, the `hvc1` video tag, and passthrough frame
+timing. It preserves resolution and skips keyframe snapping. It is mutually
+exclusive with `--reencode`, which retains H.264 fast / CRF 18 and AAC 192k.
+Without either flag, trimming remains lossless stream copy. `--check` still
+generates no output.
+
+Use a separate output path to preserve the input. MP4 with AAC audio is
+recommended; other containers must support HEVC and the copied audio codec.
+HEVC has more limited playback compatibility than H.264 and is lossy: storage
+savings and perceptual quality vary by footage. Review the output before
+discarding originals. Encoding failures report FFmpeg diagnostics rather than
+falling back to another codec.
+
 ### 5. Custom Scoreboard Region of Interest
 
 If your video uses a unique scoreboard position, specify `--roi x1,y1,x2,y2` in
@@ -236,7 +256,7 @@ usage: hockey_trimmer [-h] -i INPUT [-o OUTPUT] [-c]
                       [--preset {blackbear,top_left,top_center}] [--roi ROI]
                       [--end-confirm-window SEC] [--end-confirm-interval SEC]
                       [--no-end-confirm]
-                      [--reencode] [--no-keyframe-snap] [-v]
+                      [--reencode | --hevc] [--no-keyframe-snap] [-v]
 
 Automated ice hockey video analyzer and trimmer.
 
@@ -266,7 +286,10 @@ options:
                         (default: 10.0).
   --no-end-confirm      Disable final-horn confirmation and end the game at
                         the first 0:00 clock reading.
-  --reencode            Re-encode video instead of fast stream copy (-c copy).
+  --reencode            Re-encode to H.264 (fast, CRF 18) with AAC audio
+                        instead of stream copy.
+  --hevc                Re-encode to HEVC (libx265, fast, CRF 21) with
+                        unchanged audio.
   --no-keyframe-snap    Disable snapping cut points to adjacent keyframes
                         when using stream copy.
   -v, --verbose         Enable verbose output showing per-sample detection details.
@@ -292,8 +315,9 @@ pytest -v
 Tests cover CLI parsing, scoreboard presence, OCR, game lifecycle transitions,
 overtime, observation capture/replay, and actual FFmpeg extraction and trimming.
 Normal tests use committed fixtures and need no original recordings or network.
-Media integration requires FFmpeg/FFprobe with libx264; missing tools skip that
-class locally and fail in CI.
+Media integration requires FFmpeg/FFprobe with libx264 and AAC; HEVC integration
+also requires libx265. Missing prerequisites skip the affected tests locally
+and fail in CI.
 
 ### Real-footage regression fixtures
 
