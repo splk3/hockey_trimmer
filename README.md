@@ -230,6 +230,23 @@ glyph confidently.bash
 python hockey_trimmer.py -i game_raw.mp4 -o game_trimmed.mp4 --roi 0.05,0.02,0.25,0.14
 ```
 
+### 6. Multi-Part Downloads (e.g. LiveBarn)
+
+LiveBarn and similar services often split one session into several files.
+Repeat `-i` to concatenate them, in the order given, before analysis:
+
+```bash
+python hockey_trimmer.py -i part1.mp4 -i part2.mp4 -i part3.mp4 -o game_trimmed.mp4
+```
+
+Inputs are joined losslessly with FFmpeg's concat demuxer (stream copy), so
+all parts must share codec parameters. Only video and audio streams are kept
+(LiveBarn's AMF0 data track is dropped). The joined video is written to a
+temporary sibling of the output, such as `game_trimmed.concat.a8Xk2q.tmp.mp4`,
+and is always deleted afterwards. With `--check` and no `-o`, it goes to a
+system temp directory instead. Reported timestamps are relative to the joined
+video. Expect temporary disk usage roughly equal to the combined input size.
+
 ---
 
 ## Real-World Benchmark
@@ -249,7 +266,7 @@ Tested on raw arena footage (`20260913-ducks12aa-vs-genesis-mcginty-raw.mp4`):
 ## CLI Reference
 
 ```text
-usage: hockey_trimmer [-h] -i INPUT [-o OUTPUT] [-c]
+usage: hockey_trimmer [-h] -i INPUT [-i INPUT ...] [-o OUTPUT] [-c]
                       [--buffer-before BUFFER_BEFORE]
                       [--buffer-after BUFFER_AFTER]
                       [--sample-interval SAMPLE_INTERVAL]
@@ -263,6 +280,8 @@ Automated ice hockey video analyzer and trimmer.
 options:
   -h, --help            show this help message and exit
   -i, --input INPUT     Path to input video file (e.g., .mp4, .mov, .mkv).
+                        Repeat to concatenate multiple files in order before
+                        analysis (e.g. LiveBarn multi-part downloads).
   -o, --output OUTPUT   Path to output trimmed video file. Required unless
                         --check is set.
   -c, --check           Analysis mode only: report detected game boundaries

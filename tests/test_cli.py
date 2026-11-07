@@ -3,9 +3,18 @@ Tests for CLI argument parsing and validation.
 """
 
 import io
+import os
+import re
+import tempfile
 import unittest
-from unittest.mock import patch
-from hockey_trimmer.cli import parse_args, format_seconds, main, analyze_video
+from unittest.mock import MagicMock, patch
+from hockey_trimmer.cli import (
+    analyze_video,
+    concat_temp_path,
+    format_seconds,
+    main,
+    parse_args,
+)
 from hockey_trimmer.detector import ScoreboardReading
 from hockey_trimmer.timeline import GameBoundaries, GameState
 from hockey_trimmer.trimmer import VideoInfo
@@ -20,7 +29,7 @@ class TestCLI(unittest.TestCase):
 
     def test_parse_args_valid(self):
         args = parse_args(["-i", "game.mp4", "-o", "trimmed.mp4"])
-        self.assertEqual(args.input, "game.mp4")
+        self.assertEqual(args.input, ["game.mp4"])
         self.assertEqual(args.output, "trimmed.mp4")
         self.assertFalse(args.check)
         self.assertEqual(args.buffer_before, 15.0)
@@ -107,7 +116,7 @@ class TestCLI(unittest.TestCase):
                 "20",
             ]
         )
-        self.assertEqual(args.input, "game.mp4")
+        self.assertEqual(args.input, ["game.mp4"])
         self.assertTrue(args.check)
         self.assertIsNone(args.output)
         self.assertEqual(args.buffer_before, 10.0)
@@ -141,6 +150,120 @@ class TestCLI(unittest.TestCase):
             ret = main(["-i", "game.mp4", "-o", "out.mp4", "--roi", "invalid,roi"])
         self.assertEqual(ret, 1)
         self.assertIn("--roi must be 4 comma-separated numbers", buf.getvalue())
+
+    def test_parse_args_multiple_inputs_keep_order(self):
+        args = parse_args(["-i", "b.mp4", "-i", "a.mp4", "-i", "c.mp4", "--check"])
+        self.assertEqual(args.input, ["b.mp4", "a.mp4", "c.mp4"])
+
+    def test_concat_temp_path_is_random_sibling_of_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = os.path.join(tmp, "game.mp4")
+            self.assertRegex(
+                concat_temp_path(output),
+                rf"^{re.escape(os.path.join(tmp, 'game'))}\.concat\.[A-Za-z0-9]{{6}}\.tmp\.mp4$",
+            )
+            open(os.path.join(tmp, "game.concat.AAAAAA.tmp.mp4"), "w").close()
+            with patch(
+                "hockey_trimmer.cli.secrets.choice", side_effect=["A"] * 6 + ["Z"] * 6
+            ):
+                self.assertEqual(
+                    concat_temp_path(output),
+                    os.path.join(tmp, "game.concat.ZZZZZZ.tmp.mp4"),
+                )
+
+    def _multi_input_main(self, argv, concat_ok=True, trim_ok=True):
+        """Run main() with real temp inputs and mocked ffmpeg-backed helpers."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        inputs = []
+        for name in ("p1.mp4", "p2.mp4", "p3.mp4"):
+            path = os.path.join(tmp.name, name)
+            open(path, "w").close()
+            inputs += ["-i", path]
+        output = os.path.join(tmp.name, "game.mp4")
+        argv = [a.replace("OUT", output).replace("P1", inputs[1]) for a in argv]
+        seen = {}
+
+        def fake_concat(paths, out):
+            seen["concat"] = (list(paths), out)
+            open(out, "w").close()
+            return concat_ok
+
+        def fake_analyze(video_path, **kwargs):
+            seen["analyzed"] = video_path
+            self.assertTrue(os.path.exists(video_path))
+            return GameBoundaries(
+                game_found=True,
+                puck_drop_time=20,
+                final_horn_time=35,
+                cut_start_time=5,
+                cut_end_time=50,
+            )
+
+        def fake_trimmer(video_path):
+            seen["trimmed_from"] = video_path
+            trimmer = MagicMock()
+            trimmer.trim.side_effect = lambda **kw: (
+                open(kw["output_path"], "w").close() or trim_ok
+            )
+            return trimmer
+
+        with patch("hockey_trimmer.cli.concat_videos", side_effect=fake_concat), patch(
+            "hockey_trimmer.cli.analyze_video", side_effect=fake_analyze
+        ), patch("hockey_trimmer.cli.VideoTrimmer", side_effect=fake_trimmer), patch(
+            "sys.stdout", io.StringIO()
+        ), patch(
+            "sys.stderr", io.StringIO()
+        ):
+            result = main(inputs + argv)
+        return result, seen, [inputs[i] for i in range(1, 6, 2)], output
+
+    def test_main_multiple_inputs_concat_then_trim_and_cleanup(self):
+        result, seen, inputs, output = self._multi_input_main(["-o", "OUT"])
+        self.assertEqual(result, 0)
+        concat_inputs, concat_out = seen["concat"]
+        self.assertEqual(concat_inputs, inputs)
+        self.assertRegex(
+            os.path.basename(concat_out), r"^game\.concat\.[A-Za-z0-9]{6}\.tmp\.mp4$"
+        )
+        self.assertEqual(os.path.dirname(concat_out), os.path.dirname(output))
+        self.assertEqual(seen["analyzed"], concat_out)
+        self.assertEqual(seen["trimmed_from"], concat_out)
+        self.assertTrue(os.path.exists(output))
+        self.assertFalse(os.path.exists(concat_out))
+
+    def test_main_multiple_inputs_cleans_temp_on_failure(self):
+        result, seen, _, _ = self._multi_input_main(["-o", "OUT"], trim_ok=False)
+        self.assertEqual(result, 1)
+        self.assertFalse(os.path.exists(seen["concat"][1]))
+
+        result, seen, _, _ = self._multi_input_main(["-o", "OUT"], concat_ok=False)
+        self.assertEqual(result, 1)
+        self.assertNotIn("analyzed", seen)
+        self.assertFalse(os.path.exists(seen["concat"][1]))
+
+    def test_main_multiple_inputs_check_mode_uses_system_temp(self):
+        result, seen, _, output = self._multi_input_main(["--check"])
+        self.assertEqual(result, 0)
+        concat_out = seen["concat"][1]
+        self.assertNotEqual(os.path.dirname(concat_out), os.path.dirname(output))
+        self.assertNotIn("trimmed_from", seen)
+        self.assertFalse(os.path.exists(os.path.dirname(concat_out)))
+
+    def test_main_multiple_inputs_rejects_output_matching_input(self):
+        result, seen, _, _ = self._multi_input_main(["-o", "P1"])
+        self.assertEqual(result, 1)
+        self.assertNotIn("concat", seen)
+
+    def test_main_multiple_inputs_rejects_missing_input(self):
+        buf = io.StringIO()
+        with patch("sys.stderr", buf), patch(
+            "hockey_trimmer.cli.concat_videos"
+        ) as mock_concat:
+            ret = main(["-i", "missing1.mp4", "-i", "missing2.mp4", "--check"])
+        self.assertEqual(ret, 1)
+        self.assertIn("not found", buf.getvalue())
+        mock_concat.assert_not_called()
 
 
 def _scripted_reading(timestamp: float) -> ScoreboardReading:

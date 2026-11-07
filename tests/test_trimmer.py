@@ -3,13 +3,56 @@ Tests for trimmer utility functions and keyframe logic.
 """
 
 import io
+import os
 import unittest
 from unittest.mock import patch, MagicMock
 from hockey_trimmer.trimmer import (
     VideoInfo,
+    concat_videos,
     snap_to_keyframes,
     VideoTrimmer,
 )
+
+
+class TestConcatVideos(unittest.TestCase):
+
+    @patch("hockey_trimmer.trimmer.subprocess.run")
+    def test_concat_preserves_order_and_cleans_list(self, mock_run):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            list_path = cmd[cmd.index("-i") + 1]
+            with open(list_path, encoding="utf-8") as handle:
+                captured["list"] = handle.read()
+            captured["list_path"] = list_path
+            captured["cmd"] = cmd
+            return MagicMock(returncode=0)
+
+        mock_run.side_effect = fake_run
+        inputs = ["/v/part2.mp4", "/v/part1.mp4", "/v/it's.mp4"]
+        self.assertTrue(concat_videos(inputs, "/v/out.tmp.mp4"))
+
+        self.assertEqual(
+            captured["list"],
+            "ffconcat version 1.0\n"
+            "file '/v/part2.mp4'\n"
+            "file '/v/part1.mp4'\n"
+            "file '/v/it'\\''s.mp4'\n",
+        )
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[cmd.index("-f") + 1], "concat")
+        self.assertEqual(cmd[cmd.index("-c") + 1], "copy")
+        self.assertIn("0:v:0", cmd)
+        self.assertIn("0:a?", cmd)
+        self.assertEqual(cmd[-1], "/v/out.tmp.mp4")
+        self.assertFalse(os.path.exists(captured["list_path"]))
+
+    @patch("hockey_trimmer.trimmer.subprocess.run")
+    def test_concat_failure_reports_error(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr="boom")
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertFalse(concat_videos(["a.mp4", "b.mp4"], "out.mp4"))
+        self.assertIn("boom", stderr.getvalue())
 
 
 class TestVideoTrimmer(unittest.TestCase):
