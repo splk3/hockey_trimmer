@@ -387,8 +387,7 @@ def main(argv: Optional[list] = None) -> int:
         concat_path = concat_temp_path(args.output)
     else:
         temp_dir = tempfile.mkdtemp(prefix="hockey_trimmer_")
-        ext = os.path.splitext(inputs[0])[1] or ".mp4"
-        concat_path = os.path.join(temp_dir, f"concat{ext}")
+        concat_path = os.path.join(temp_dir, "concat.mkv")
 
     try:
         print(f"🔗 Concatenating {len(inputs)} input files -> {concat_path}")
@@ -406,17 +405,20 @@ def main(argv: Optional[list] = None) -> int:
 
 
 def concat_temp_path(output_path: str) -> str:
-    """Unused sibling path for the concatenated intermediate, e.g. game.concat.a8Xk2q.tmp.mp4."""
-    stem, ext = os.path.splitext(output_path)
+    """Unused sibling path for the Matroska intermediate."""
+    stem, _ = os.path.splitext(output_path)
     while True:
         token = "".join(secrets.choice(_TEMP_SUFFIX_CHARS) for _ in range(6))
-        candidate = f"{stem}.concat.{token}.tmp{ext}"
+        candidate = f"{stem}.concat.{token}.tmp.mkv"
         if not os.path.exists(candidate):
             return candidate
 
 
 def _same_path(a: str, b: str) -> bool:
-    return os.path.realpath(a) == os.path.realpath(b)
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.realpath(a) == os.path.realpath(b)
 
 
 def _analyze_and_trim(

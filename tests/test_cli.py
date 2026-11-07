@@ -160,15 +160,15 @@ class TestCLI(unittest.TestCase):
             output = os.path.join(tmp, "game.mp4")
             self.assertRegex(
                 concat_temp_path(output),
-                rf"^{re.escape(os.path.join(tmp, 'game'))}\.concat\.[A-Za-z0-9]{{6}}\.tmp\.mp4$",
+                rf"^{re.escape(os.path.join(tmp, 'game'))}\.concat\.[A-Za-z0-9]{{6}}\.tmp\.mkv$",
             )
-            open(os.path.join(tmp, "game.concat.AAAAAA.tmp.mp4"), "w").close()
+            open(os.path.join(tmp, "game.concat.AAAAAA.tmp.mkv"), "w").close()
             with patch(
                 "hockey_trimmer.cli.secrets.choice", side_effect=["A"] * 6 + ["Z"] * 6
             ):
                 self.assertEqual(
                     concat_temp_path(output),
-                    os.path.join(tmp, "game.concat.ZZZZZZ.tmp.mp4"),
+                    os.path.join(tmp, "game.concat.ZZZZZZ.tmp.mkv"),
                 )
 
     def _multi_input_main(self, argv, concat_ok=True, trim_ok=True):
@@ -224,7 +224,7 @@ class TestCLI(unittest.TestCase):
         concat_inputs, concat_out = seen["concat"]
         self.assertEqual(concat_inputs, inputs)
         self.assertRegex(
-            os.path.basename(concat_out), r"^game\.concat\.[A-Za-z0-9]{6}\.tmp\.mp4$"
+            os.path.basename(concat_out), r"^game\.concat\.[A-Za-z0-9]{6}\.tmp\.mkv$"
         )
         self.assertEqual(os.path.dirname(concat_out), os.path.dirname(output))
         self.assertEqual(seen["analyzed"], concat_out)
@@ -254,6 +254,23 @@ class TestCLI(unittest.TestCase):
         result, seen, _, _ = self._multi_input_main(["-o", "P1"])
         self.assertEqual(result, 1)
         self.assertNotIn("concat", seen)
+
+    def test_main_multiple_inputs_rejects_output_hard_link_to_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_a = os.path.join(tmp, "part1.mp4")
+            input_b = os.path.join(tmp, "part2.mp4")
+            output = os.path.join(tmp, "output.mp4")
+            open(input_a, "w").close()
+            open(input_b, "w").close()
+            os.link(input_a, output)
+
+            with patch("hockey_trimmer.cli.concat_videos") as mock_concat, patch(
+                "sys.stderr", io.StringIO()
+            ):
+                result = main(["-i", input_a, "-i", input_b, "-o", output])
+
+        self.assertEqual(result, 1)
+        mock_concat.assert_not_called()
 
     def test_main_multiple_inputs_rejects_missing_input(self):
         buf = io.StringIO()

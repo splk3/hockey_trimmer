@@ -242,7 +242,7 @@ python hockey_trimmer.py -i part1.mp4 -i part2.mp4 -i part3.mp4 -o game_trimmed.
 Inputs are joined losslessly with FFmpeg's concat demuxer (stream copy), so
 all parts must share codec parameters. Only video and audio streams are kept
 (LiveBarn's AMF0 data track is dropped). The joined video is written to a
-temporary sibling of the output, such as `game_trimmed.concat.a8Xk2q.tmp.mp4`,
+temporary Matroska sibling of the output, such as `game_trimmed.concat.a8Xk2q.tmp.mkv`,
 and is always deleted afterwards. With `--check` and no `-o`, it goes to a
 system temp directory instead. Reported timestamps are relative to the joined
 video. Expect temporary disk usage roughly equal to the combined input size.

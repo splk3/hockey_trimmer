@@ -223,9 +223,13 @@ def concat_videos(input_paths: Sequence[str], output_path: str) -> bool:
             "make_zero",
             output_path,
         ]
-        res = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
+        try:
+            res = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+        except OSError as exc:
+            print(f"Video concatenation failed:\n{exc}", file=sys.stderr)
+            return False
     finally:
         os.remove(list_path)
 

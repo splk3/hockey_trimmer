@@ -77,7 +77,7 @@ The codebase is built around a video-analysis pipeline that samples frames over 
 
 1. `cli.py`
    - Parses CLI flags such as `-i/--input`, `-o/--output`, `--check`, `--preset`, `--roi`, and `--reencode`.
-   - `-i` is repeatable: multiple inputs are first concatenated in order (`trimmer.concat_videos`, stream copy, video/audio only) into a sibling temp `<stem>.concat.<RAND6>.tmp<ext>` of the output (system temp dir for `--check` without `-o`), which is always removed in a `finally`. Single-input runs never create it.
+   - `-i` is repeatable: multiple inputs are first concatenated in order (`trimmer.concat_videos`, stream copy, video/audio only) into a sibling Matroska temp `<stem>.concat.<RAND6>.tmp.mkv` of the output (system temp dir for `--check` without `-o`), which is always removed in a `finally`. Single-input runs never create it.
    - Calls `analyze_video()` to scan the file and infer cut boundaries.
    - Uses `VideoTrimmer` only after a valid game is found.
 

@@ -54,6 +54,21 @@ class TestConcatVideos(unittest.TestCase):
             self.assertFalse(concat_videos(["a.mp4", "b.mp4"], "out.mp4"))
         self.assertIn("boom", stderr.getvalue())
 
+    def test_concat_launch_error_reports_error_and_cleans_list(self):
+        list_path = None
+
+        def capture_list_path(*args, **kwargs):
+            nonlocal list_path
+            list_path = args[0][args[0].index("-i") + 1]
+            raise FileNotFoundError("ffmpeg")
+
+        with patch(
+            "hockey_trimmer.trimmer.subprocess.run", side_effect=capture_list_path
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertFalse(concat_videos(["a.mp4", "b.mp4"], "out.mp4"))
+        self.assertIn("ffmpeg", stderr.getvalue())
+        self.assertFalse(os.path.exists(list_path))
+
 
 class TestVideoTrimmer(unittest.TestCase):
 
