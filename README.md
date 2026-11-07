@@ -2,7 +2,7 @@
 
 [![CI Tests](https://github.com/your-username/hockey-trimmer/actions/workflows/test.yml/badge.svg)](https://github.com/your-username/hockey-trimmer/actions/workflows/test.yml)
 [![Super-Linter](https://github.com/your-username/hockey-trimmer/actions/workflows/linter.yml/badge.svg)](https://github.com/your-username/hockey-trimmer/actions/workflows/linter.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An automated Python command-line utility for analyzing ice hockey game videos,
@@ -100,7 +100,7 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
 
 ## Prerequisites
 
-- **Python**: 3.10 or higher
+- **Python**: 3.11 or higher
 - **FFmpeg & FFprobe**: Required for video probing, frame extraction, and video
   cutting.
   - **Ubuntu / Debian**:
@@ -469,7 +469,7 @@ hockey-trimmer/
 ├── .github/
 │   ├── dependabot.yml      # Dependabot configuration for pip & actions
 │   └── workflows/
-│       ├── test.yml        # CI test matrix across Python 3.10–3.13
+│       ├── test.yml        # CI test matrix across Python 3.11–3.13
 │       └── linter.yml      # GitHub Super-Linter workflow
 ├── hockey_trimmer.py       # Top-level executable script
 ├── requirements.txt        # Production dependencies
