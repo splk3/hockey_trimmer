@@ -22,7 +22,7 @@ The workflow is intentionally split by responsibility:
 
 Prerequisites from the project docs:
 
-- Python 3.10+
+- Python 3.11+
 - FFmpeg and FFprobe installed on the host
 - Optional: Tesseract OCR for custom OCR fallback scenarios
 
@@ -68,7 +68,7 @@ python -m black --check hockey_trimmer tests
 
 CI behavior in this repo:
 
-- `.github/workflows/test.yml` runs `python -m unittest discover -s tests -v` on Python 3.10, 3.11, 3.12, and 3.13, after installing FFmpeg and Tesseract.
+- `.github/workflows/test.yml` runs `python -m unittest discover -s tests -v` on Python 3.11, 3.12, and 3.13, after installing FFmpeg and Tesseract.
 - `.github/workflows/linter.yml` validates the codebase with Super-Linter, including Python Black and Flake8.
 
 ## High-level architecture
