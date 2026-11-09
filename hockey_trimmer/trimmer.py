@@ -3,10 +3,12 @@ FFmpeg video probing, frame extraction, keyframe snapping, and trimming utilitie
 """
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Sequence
 import io
 from PIL import Image
 
@@ -177,6 +179,63 @@ def snap_to_keyframes(
     snapped_end = after_kfs[0] if after_kfs else cut_end
 
     return snapped_start, snapped_end
+
+
+def _ffconcat_quote(path: str) -> str:
+    return "'" + path.replace("'", "'\\''") + "'"
+
+
+def concat_videos(input_paths: Sequence[str], output_path: str) -> bool:
+    """
+    Losslessly concatenate videos, in the given order, into output_path.
+
+    Uses the FFmpeg concat demuxer with stream copy, so inputs must share
+    codec parameters (as sequential LiveBarn downloads do). Only the first
+    video stream and any audio streams are kept; LiveBarn files also carry
+    an AMF0 data track that the MP4 muxer cannot stream-copy.
+    """
+    if not input_paths:
+        raise ValueError("At least one input is required for concatenation.")
+
+    fd, list_path = tempfile.mkstemp(prefix="hockey_trimmer_concat_", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("ffconcat version 1.0\n")
+            for path in input_paths:
+                handle.write(f"file {_ffconcat_quote(os.path.abspath(path))}\n")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "-avoid_negative_ts",
+            "make_zero",
+            output_path,
+        ]
+        try:
+            res = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+        except OSError as exc:
+            print(f"Video concatenation failed:\n{exc}", file=sys.stderr)
+            return False
+    finally:
+        os.remove(list_path)
+
+    if res.returncode != 0:
+        print(f"Video concatenation failed:\n{res.stderr}", file=sys.stderr)
+    return res.returncode == 0
 
 
 class VideoTrimmer:

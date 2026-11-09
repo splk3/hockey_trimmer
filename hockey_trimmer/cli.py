@@ -4,14 +4,25 @@ Command-line interface and end-to-end video analysis orchestrator.
 
 import argparse
 import os
+import secrets
+import shutil
+import string
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, replace
-from typing import Callable, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
 from .detector import ScoreboardDetector, ScoreboardReading
 from .timeline import GameTimelineTracker, GameBoundaries, GameState
-from .trimmer import VideoTrimmer, probe_video, extract_frame_at_timestamp
+from .trimmer import (
+    VideoTrimmer,
+    concat_videos,
+    probe_video,
+    extract_frame_at_timestamp,
+)
+
+_TEMP_SUFFIX_CHARS = string.ascii_letters + string.digits
 
 AnalysisPhase = Literal["scan", "refine_start", "refine_end"]
 
@@ -219,7 +230,9 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
             "  # Trim the first complete game using fast stream copy:\n"
             "  hockey_trimmer -i game_raw.mp4 -o game_trimmed.mp4\n\n"
             "  # Trim with 10s buffers and re-encoding:\n"
-            "  hockey_trimmer -i game_raw.mp4 -o game_trimmed.mp4 --buffer-before 10 --buffer-after 10 --reencode\n"
+            "  hockey_trimmer -i game_raw.mp4 -o game_trimmed.mp4 --buffer-before 10 --buffer-after 10 --reencode\n\n"
+            "  # Concatenate multi-part downloads (e.g. LiveBarn) in order, then trim:\n"
+            "  hockey_trimmer -i part1.mp4 -i part2.mp4 -i part3.mp4 -o game_trimmed.mp4\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -228,7 +241,12 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "-i",
         "--input",
         required=True,
-        help="Path to the input video file (e.g., .mp4, .mov, .mkv).",
+        action="append",
+        help=(
+            "Path to an input video file (e.g., .mp4, .mov, .mkv). Repeat to "
+            "concatenate multiple files in the given order before analysis "
+            "(e.g. LiveBarn multi-part downloads)."
+        ),
     )
     parser.add_argument(
         "-o",
@@ -346,9 +364,69 @@ def main(argv: Optional[list] = None) -> int:
             )
             return 1
 
+    inputs: List[str] = args.input
+    if len(inputs) == 1:
+        return _analyze_and_trim(args, inputs[0], custom_roi)
+
+    missing = [path for path in inputs if not os.path.isfile(path)]
+    if missing:
+        print(
+            f"❌ Error: input file(s) not found: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 1
+    if args.output and any(_same_path(args.output, path) for path in inputs):
+        print(
+            "❌ Error: -o / --output must not be one of the input files.",
+            file=sys.stderr,
+        )
+        return 1
+
+    temp_dir = None
+    if args.output:
+        concat_path = concat_temp_path(args.output)
+    else:
+        temp_dir = tempfile.mkdtemp(prefix="hockey_trimmer_")
+        concat_path = os.path.join(temp_dir, "concat.mkv")
+
+    try:
+        print(f"🔗 Concatenating {len(inputs)} input files -> {concat_path}")
+        t_concat_start = time.time()
+        if not concat_videos(inputs, concat_path):
+            print("❌ Error: FFmpeg failed to concatenate inputs.", file=sys.stderr)
+            return 1
+        print(f"   Concatenated in {time.time() - t_concat_start:.1f}s")
+        return _analyze_and_trim(args, concat_path, custom_roi)
+    finally:
+        if os.path.exists(concat_path):
+            os.remove(concat_path)
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def concat_temp_path(output_path: str) -> str:
+    """Unused sibling path for the Matroska intermediate."""
+    stem, _ = os.path.splitext(output_path)
+    while True:
+        token = "".join(secrets.choice(_TEMP_SUFFIX_CHARS) for _ in range(6))
+        candidate = f"{stem}.concat.{token}.tmp.mkv"
+        if not os.path.exists(candidate):
+            return candidate
+
+
+def _same_path(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.realpath(a) == os.path.realpath(b)
+
+
+def _analyze_and_trim(
+    args: argparse.Namespace, video_path: str, custom_roi: Optional[tuple]
+) -> int:
     try:
         boundaries = analyze_video(
-            video_path=args.input,
+            video_path=video_path,
             buffer_before=args.buffer_before,
             buffer_after=args.buffer_after,
             sample_interval=args.sample_interval,
@@ -402,7 +480,7 @@ def main(argv: Optional[list] = None) -> int:
 
     # Trimming
     print("\n✂️ Trimming video...")
-    trimmer = VideoTrimmer(args.input)
+    trimmer = VideoTrimmer(video_path)
     t_trim_start = time.time()
     success = trimmer.trim(
         output_path=args.output,
