@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -49,7 +50,7 @@ def replay_analyzer(trace):
 
     class Detector:
         def __init__(self, **kwargs):
-            pass
+            self.ocr = SimpleNamespace(tesseract_warning=None)
 
         def analyze_frame(self, frame, timestamp):
             return reading_from_dict(current["reading"])
@@ -99,6 +100,9 @@ class TestRegressionCorpus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.manifest = validate_manifest(load_json(ROOT / "manifest.json"), ROOT)
+        cls.score_manifest = validate_manifest(
+            load_json(ROOT / "score_manifest.json"), ROOT
+        )
 
     def test_corpus_budget_and_review_status(self):
         total = sum(p.stat().st_size for p in ROOT.rglob("*") if p.is_file())
@@ -109,6 +113,37 @@ class TestRegressionCorpus(unittest.TestCase):
         )
         for path in self.manifest["traces"]:
             self.assertEqual(load_json(ROOT / path)["review_status"], "reviewed")
+
+    def test_reviewed_scores_without_tesseract(self):
+        detector = ScoreboardDetector()
+        detector.ocr.has_tesseract_bin = False
+        for sample in self.score_manifest["samples"]:
+            with self.subTest(sample=sample["id"]), Image.open(
+                fixture_path(ROOT, sample["path"])
+            ) as overlay:
+                self.assertEqual(sample["review_status"], "reviewed")
+                self.assertFalse(sample["template_training_overlap"])
+                score = detector.ocr.read_score(
+                    detector.crop_subregion(overlay, sample["config"]["score_roi"])
+                )
+                expected = sample["expected"]["score"]
+                self.assertEqual(
+                    score, tuple(expected) if expected is not None else None
+                )
+
+    def test_blackbear_score_with_custom_full_roi(self):
+        sample = next(
+            s for s in self.score_manifest["samples"] if s["timestamp"] == 2940
+        )
+        detector = ScoreboardDetector(custom_roi=(0.145, 0.12, 0.355, 0.24))
+        detector.ocr.has_tesseract_bin = False
+        frame = Image.new("RGB", (1280, 720), (80, 80, 80))
+        bbox = detector._get_pixel_bbox(detector.config["full_roi"], *frame.size)
+        with Image.open(fixture_path(ROOT, sample["path"])) as overlay:
+            frame.paste(
+                overlay.resize((bbox[2] - bbox[0], bbox[3] - bbox[1])), bbox[:2]
+            )
+        self.assertEqual(detector.analyze_frame(frame, 2940).score, (4, 1))
 
     def test_held_out_visual_samples_and_resolutions(self):
         self.assertTrue(
@@ -171,8 +206,11 @@ class TestRegressionCorpus(unittest.TestCase):
                         )
 
     def test_detector_on_reconstructed_native_canvas(self):
-        sources = {s["name"]: s for s in self.manifest["sources"]}
-        for sample in self.manifest["samples"]:
+        sources = {
+            s["name"]: s
+            for s in self.manifest["sources"] + self.score_manifest["sources"]
+        }
+        for sample in self.manifest["samples"] + self.score_manifest["samples"]:
             with self.subTest(sample=sample["id"]):
                 source = sources[sample["source"]]
                 frame = Image.new(

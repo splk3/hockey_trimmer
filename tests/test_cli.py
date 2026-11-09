@@ -8,6 +8,7 @@ import re
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 from hockey_trimmer.cli import (
     analyze_video,
     concat_temp_path,
@@ -326,10 +327,260 @@ def _scripted_reading(timestamp: float) -> ScoreboardReading:
 
 class _FakeDetector:
     def __init__(self, *args, **kwargs):
-        pass
+        self.ocr = SimpleNamespace(tesseract_warning=None)
 
     def analyze_frame(self, frame, timestamp):
         return _scripted_reading(timestamp)
+
+
+class TestAnalysisStatus(unittest.TestCase):
+    def _run(
+        self,
+        read,
+        duration=240.0,
+        verbose=False,
+        warning=None,
+        sample_interval=10.0,
+        fine_refine=False,
+    ):
+        info = VideoInfo("game.mp4", duration, 1280, 720, 30, "h264", "aac")
+        observations = []
+
+        class Detector:
+            def __init__(self, **kwargs):
+                self.ocr = SimpleNamespace(tesseract_warning=warning)
+
+            def analyze_frame(self, frame, timestamp):
+                return read(timestamp)
+
+        with patch("hockey_trimmer.cli.os.path.exists", return_value=True), patch(
+            "hockey_trimmer.cli.probe_video", return_value=info
+        ), patch(
+            "hockey_trimmer.cli.extract_frame_at_timestamp",
+            side_effect=lambda path, ts: None if ts == 60 else object(),
+        ), patch(
+            "hockey_trimmer.cli.ScoreboardDetector", Detector
+        ), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout, patch(
+            "sys.stderr", new_callable=io.StringIO
+        ) as stderr:
+            boundaries = analyze_video(
+                "game.mp4",
+                verbose=verbose,
+                fine_refine=fine_refine,
+                sample_interval=sample_interval,
+                observer=observations.append,
+            )
+        return stdout.getvalue(), stderr.getvalue(), observations, boundaries
+
+    def test_current_and_last_seen_scores_in_verbose_and_progress_output(self):
+        def read(ts):
+            return ScoreboardReading(
+                present=ts != 20,
+                timestamp=ts,
+                period=1,
+                clock_seconds=900 - ts,
+                score={0: (0, 0), 30: (1, 0)}.get(ts),
+            )
+
+        for verbose in (False, True):
+            with self.subTest(verbose=verbose):
+                output, _, observations, _ = self._run(read, verbose=verbose)
+                self.assertIn("Score: 0-0\n", output)
+                self.assertIn("Score: 0-0 (last seen at 00:00)", output)
+                self.assertIn("Score: 1-0 (last seen at 00:30)", output)
+                self.assertEqual(output.count("Opening puck drop detected"), 1)
+                self.assertNotIn("Score: (", output)
+                self.assertIsNone(observations[1].reading.score)
+                self.assertIsNone(
+                    next(o for o in observations if o.timestamp == 60).reading
+                )
+                if verbose:
+                    self.assertIn("[00:30] P:1 | Clock: 14:30 | Score: 1-0\n", output)
+                    self.assertNotIn("Progress:", output)
+                else:
+                    self.assertEqual(output.count("Progress:"), 1)
+
+    def test_progress_timestamp_matches_current_score_observation(self):
+        output, _, _, _ = self._run(
+            lambda ts: ScoreboardReading(True, ts, 1, 900 - ts, (1, 0))
+        )
+        progress = next(line for line in output.splitlines() if "Progress:" in line)
+        self.assertIn("(03:10 / 04:00) | Score: 1-0", progress)
+        self.assertNotIn("last seen", progress)
+
+    def test_unknown_score_is_not_inferred_at_game_start(self):
+        output, _, _, _ = self._run(
+            lambda ts: ScoreboardReading(
+                present=True, timestamp=ts, period=1, clock_seconds=900 - ts
+            ),
+            duration=30,
+            verbose=True,
+        )
+        self.assertIn("Opening puck drop detected", output)
+        self.assertIn("Score: unknown", output)
+        self.assertNotIn("Score: 0-0", output)
+
+    def test_previous_game_score_does_not_leak_into_new_game_status(self):
+        def read(ts):
+            if ts < 20:
+                return ScoreboardReading(
+                    present=True,
+                    timestamp=ts,
+                    period=3,
+                    clock_seconds=100,
+                    score=(8, 9),
+                )
+            if ts < 360:
+                return ScoreboardReading(present=False, timestamp=ts)
+            return ScoreboardReading(
+                present=True,
+                timestamp=ts,
+                period=1,
+                clock_seconds=900 - (ts - 360),
+            )
+
+        output, _, _, _ = self._run(read, duration=400, verbose=True)
+        new_game_output = output[output.index("[06:00] P:1") :]
+        self.assertIn("Opening puck drop detected", new_game_output)
+        self.assertIn("Score: unknown", new_game_output)
+        self.assertNotIn("8-9", new_game_output)
+
+    def test_refinement_scores_do_not_rewrite_scan_status(self):
+        def read(ts):
+            reading = _scripted_reading(ts)
+            if ts % 10:
+                reading.score = (9, 9)
+            return reading
+
+        output, _, observations, boundaries = self._run(
+            read, duration=3100, sample_interval=50, fine_refine=True
+        )
+        self.assertTrue(
+            any(o.phase != "scan" and o.reading.score == (9, 9) for o in observations)
+        )
+        self.assertNotIn("9-9", output)
+        self.assertTrue(all("9-9" not in e.description for e in boundaries.events))
+        self.assertIn("Final horn confirmed", output)
+        self.assertIn("Score: 3-1", output)
+
+    def test_backdated_period_event_identifies_score_observation_time(self):
+        def read(ts):
+            reading = _scripted_reading(ts)
+            if ts in (1100, 1150):
+                reading.score = (2 if ts == 1100 else 3, 0)
+            return reading
+
+        output, _, _, _ = self._run(read, duration=1200, sample_interval=50)
+        event = next(line for line in output.splitlines() if "Period 2 began" in line)
+        self.assertIn("[18:20] Period 2 began | Score: 3-0 (last seen at 19:10)", event)
+
+    def test_new_game_score_does_not_replace_final_score(self):
+        def read(ts):
+            if ts == 3010:
+                return ScoreboardReading(True, ts, 3, 0, (4, 1))
+            if ts == 3020:
+                return ScoreboardReading(True, ts, None, 900, (0, 0))
+            if ts >= 3030:
+                return ScoreboardReading(True, ts, 1, 900, (0, 0))
+            return _scripted_reading(ts)
+
+        output, _, observations, boundaries = self._run(
+            read, duration=3100, sample_interval=50
+        )
+        final = next(
+            line for line in output.splitlines() if "Final horn confirmed" in line
+        )
+        self.assertTrue(boundaries.game_found)
+        self.assertIn("Score: 4-1 (last seen at 50:10)", final)
+        self.assertEqual(observations[-1].reading.score, (0, 0))
+
+    def test_resumed_game_updates_score_after_false_end(self):
+        def read(ts):
+            if ts in (3010, 3020):
+                return ScoreboardReading(True, ts, 3, 120, (5, 1))
+            return _scripted_reading(ts)
+
+        output, _, _, _ = self._run(read, duration=3030, sample_interval=50)
+        event = next(line for line in output.splitlines() if "False game end" in line)
+        self.assertTrue(event.endswith("| Score: 5-1"), event)
+
+    def test_final_horn_at_end_of_footage_uses_last_sample_score(self):
+        def read(ts):
+            reading = _scripted_reading(ts)
+            if reading.period == 3:
+                reading.score = (3, 1)
+            return reading
+
+        output, _, _, _ = self._run(read, duration=3050, sample_interval=50)
+        final = next(
+            line for line in output.splitlines() if "Final horn confirmed" in line
+        )
+        self.assertTrue(final.endswith("| Score: 3-1"), final)
+
+    def test_startup_warning_is_once_on_stderr_and_analysis_continues(self):
+        for verbose in (False, True):
+            for warning in (None, "Warning: external OCR fallback unavailable"):
+                with self.subTest(verbose=verbose, warning=warning):
+                    output, stderr, _, boundaries = self._run(
+                        _scripted_reading,
+                        duration=3100,
+                        sample_interval=50,
+                        verbose=verbose,
+                        warning=warning,
+                    )
+                    self.assertTrue(boundaries.game_found)
+                    self.assertIn("Scan completed", output)
+                    self.assertEqual(stderr, f"{warning}\n" if warning else "")
+                    self.assertNotIn("Warning:", output)
+
+    def test_multi_input_check_warns_once_and_never_trims(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inputs = [os.path.join(directory, name) for name in ("a.mp4", "b.mp4")]
+            for path in inputs:
+                open(path, "w").close()
+
+            def concat(paths, output):
+                open(output, "w").close()
+                return True
+
+            info = VideoInfo("concat.mkv", 3100, 1280, 720, 30, "h264", "aac")
+            with patch("hockey_trimmer.cli.concat_videos", side_effect=concat), patch(
+                "hockey_trimmer.cli.probe_video", return_value=info
+            ), patch(
+                "hockey_trimmer.cli.extract_frame_at_timestamp",
+                return_value=object(),
+            ), patch(
+                "hockey_trimmer.cli.ScoreboardDetector.analyze_frame",
+                side_effect=lambda frame, ts: _scripted_reading(ts),
+            ), patch(
+                "hockey_trimmer.ocr.pytesseract.get_tesseract_version",
+                side_effect=FileNotFoundError("missing engine"),
+            ) as probe, patch(
+                "hockey_trimmer.cli.VideoTrimmer"
+            ) as trimmer, patch(
+                "sys.stdout", new_callable=io.StringIO
+            ) as stdout, patch(
+                "sys.stderr", new_callable=io.StringIO
+            ) as stderr:
+                result = main(
+                    [
+                        "-i",
+                        inputs[0],
+                        "-i",
+                        inputs[1],
+                        "--check",
+                        "--sample-interval",
+                        "50",
+                    ]
+                )
+            self.assertEqual(result, 0)
+            probe.assert_called_once()
+            trimmer.assert_not_called()
+            self.assertEqual(stderr.getvalue().count("Warning:"), 1)
+            self.assertIn("apt-get install tesseract-ocr", stderr.getvalue())
+            self.assertIn("No output file was generated", stdout.getvalue())
 
 
 class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
@@ -429,6 +680,7 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
             def __init__(self, *args, **kwargs):
                 self.state = GameState.SEARCHING_START
                 self.events = []
+                self.p1_candidate_start = None
                 self._seen = 0
 
             def process_reading(self, reading):
@@ -451,7 +703,7 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
 
         class _MinimalDetector:
             def __init__(self, *args, **kwargs):
-                pass
+                self.ocr = SimpleNamespace(tesseract_warning=None)
 
             def analyze_frame(self, frame, timestamp):
                 return ScoreboardReading(present=False, timestamp=timestamp)
@@ -501,6 +753,7 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
                 self.state = GameState.SEARCHING_START
                 self.events = []
                 self.puck_drop_time = None
+                self.p1_candidate_start = None
                 self.p1_max_clock = None
                 self.final_horn_time = 3000.0
 
@@ -522,7 +775,7 @@ class TestAnalyzeVideoEndConfirmation(unittest.TestCase):
 
         class _RefineDetector:
             def __init__(self, *args, **kwargs):
-                pass
+                self.ocr = SimpleNamespace(tesseract_warning=None)
 
             def analyze_frame(self, frame, timestamp):
                 if 2990.0 <= timestamp <= 2991.0:

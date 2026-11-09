@@ -4,6 +4,7 @@ OCR, template matching, and text parsing utilities for scoreboard clocks, period
 
 import os
 import re
+import subprocess
 from typing import Optional, Tuple, Dict
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -327,6 +328,9 @@ class OverlayTemplateMatcher:
     DIGIT_CELL = (26, 32)
     DIGIT_MIN_SCORE = 0.60
     DIGIT_MIN_MARGIN = 0.02
+    SCORE_CANVAS = (108, 33)
+    SCORE_MIN_SCORE = 0.75
+    SCORE_MIN_MARGIN = 0.08
 
     def __init__(self, assets_dir: Optional[str] = None):
         self.assets_dir = assets_dir or BLACKBEAR_ASSETS_DIR
@@ -520,11 +524,17 @@ class OverlayTemplateMatcher:
             return None
         return best_label
 
-    def match_digit(self, cell: np.ndarray) -> Optional[str]:
+    def match_digit(
+        self,
+        cell: np.ndarray,
+        *,
+        min_score: float = DIGIT_MIN_SCORE,
+        min_margin: float = DIGIT_MIN_MARGIN,
+    ) -> Optional[str]:
         scores = {d: self._zncc(cell, t) for d, t in self.digit_templates.items()}
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         best_d, best = ranked[0]
-        if best < self.DIGIT_MIN_SCORE or best - ranked[1][1] < self.DIGIT_MIN_MARGIN:
+        if best < min_score or best - ranked[1][1] < min_margin:
             return None
         return best_d
 
@@ -543,6 +553,91 @@ class OverlayTemplateMatcher:
         text = "".join(digits)
         return parse_clock_string(f"{text[:-2]}:{text[-2:]}")
 
+    @classmethod
+    def score_digit_cells(cls, score_crop: Image.Image) -> Optional[Tuple[list, list]]:
+        """Segment white score glyphs on either side of the panel's hyphen."""
+        if not HAS_CV2 or score_crop.width == 0 or score_crop.height == 0:
+            return None
+        w, h = cls.SCORE_CANVAS
+        gray = np.array(
+            score_crop.convert("L").resize(
+                (w * cls.CLOCK_SCALE, h * cls.CLOCK_SCALE),
+                Image.Resampling.BICUBIC,
+            )
+        )
+        _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+        height, width = gray.shape
+        digits = []
+        separators = []
+        for x, y, bw, bh, area in stats[1:count]:
+            # Team-box strips touch the crop edges; the blue tab and hyphen
+            # are shorter than the score digits.
+            if x == 0 or y == 0 or x + bw == width or y + bh == height:
+                continue
+            if 0.25 * height <= bh <= 0.75 * height and bw <= 2.2 * bh:
+                digits.extend(cls._split_merged_digits(ink, x, y, bw, bh))
+            elif (
+                0.025 * height <= bh <= 0.20 * height
+                and 1.5 * bh <= bw <= 5 * bh
+                and 0.25 * width < x + bw / 2 < 0.75 * width
+                and area >= 0.5 * bw * bh
+            ):
+                separators.append((x, y, bw, bh))
+        if len(separators) != 1 or len(digits) not in (2, 3, 4):
+            return None
+        sx, sy, sw, sh = separators[0]
+        digits.sort(key=lambda box: box[0])
+        left = [box for box in digits if box[0] + box[2] <= sx]
+        right = [box for box in digits if box[0] >= sx + sw]
+        if not (1 <= len(left) <= 2 and 1 <= len(right) <= 2):
+            return None
+        if len(left) + len(right) != len(digits):
+            return None
+        heights = [box[3] for box in digits]
+        centers = [box[1] + box[3] / 2 for box in digits]
+        if (
+            max(heights) > 1.25 * min(heights)
+            or max(centers) - min(centers) > 0.2 * min(heights)
+            or abs(sy + sh / 2 - np.mean(centers)) > 0.3 * min(heights)
+        ):
+            return None
+        ordered = left + [separators[0]] + right
+        if any(
+            not 0 <= b[0] - (a[0] + a[2]) <= 0.6 * min(heights)
+            for a, b in zip(ordered, ordered[1:])
+        ):
+            return None
+        teams = [
+            [
+                cls._normalize_digit(255 - gray[y : y + bh, x : x + bw])
+                for x, y, bw, bh in boxes
+            ]
+            for boxes in (left, right)
+        ]
+        return teams[0], teams[1]
+
+    def match_score(self, score_crop: Image.Image) -> Optional[Tuple[int, int]]:
+        if not self.has_digit_templates:
+            return None
+        cells = self.score_digit_cells(score_crop)
+        if cells is None:
+            return None
+        scores = []
+        for team in cells:
+            digits = []
+            for cell in team:
+                digit = self.match_digit(
+                    cell,
+                    min_score=self.SCORE_MIN_SCORE,
+                    min_margin=self.SCORE_MIN_MARGIN,
+                )
+                if digit is None:
+                    return None
+                digits.append(digit)
+            scores.append(int("".join(digits)))
+        return scores[0], scores[1]
+
 
 class ScoreboardOCR:
     """
@@ -559,14 +654,50 @@ class ScoreboardOCR:
 
         if tesseract_cmd and HAS_PYTESSERACT:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        self.tesseract_error: Optional[str] = None
         if HAS_PYTESSERACT:
             try:
                 pytesseract.get_tesseract_version()
                 self.has_tesseract_bin = True
-            except Exception:
+            except (
+                OSError,
+                subprocess.SubprocessError,
+                UnicodeError,
+                pytesseract.TesseractError,
+                SystemExit,
+            ) as exc:
                 self.has_tesseract_bin = False
+                self.tesseract_error = (
+                    f"Tesseract executable unavailable or unusable: {exc}"
+                )
         else:
             self.has_tesseract_bin = False
+            self.tesseract_error = "Python package pytesseract is not installed."
+
+    @property
+    def tesseract_warning(self) -> Optional[str]:
+        """Actionable startup diagnostic; the CLI decides when to print it."""
+        if self.has_tesseract_bin:
+            return None
+        lines = [
+            "Warning: Tesseract OCR is unavailable; continuing with template matching.",
+            "   External OCR fallback is disabled.",
+        ]
+        if self.tesseract_error:
+            lines.append(f"   {self.tesseract_error}")
+        if not self.has_tesseract:
+            lines.append(
+                "   Install the Python wrapper in your active environment: "
+                "python -m pip install -r requirements.txt"
+            )
+        lines.extend(
+            [
+                "   Ubuntu/Debian: sudo apt-get install tesseract-ocr",
+                "   macOS: brew install tesseract",
+                "   Installation: https://tesseract-ocr.github.io/tessdoc/Installation.html",
+            ]
+        )
+        return "\n".join(lines)
 
     def preprocess_image(
         self, img: Image.Image, invert_if_dark: bool = False, scale: int = 2
@@ -679,6 +810,10 @@ class ScoreboardOCR:
 
     def read_score(self, score_crop: Image.Image) -> Optional[Tuple[int, int]]:
         """Read score (home, away) from an image crop."""
+        if self.overlay_matcher is not None:
+            score = self.overlay_matcher.match_score(score_crop)
+            if score is not None:
+                return score
         if not self.has_tesseract_bin:
             return None
         prep = self.preprocess_image(score_crop, invert_if_dark=True, scale=3)

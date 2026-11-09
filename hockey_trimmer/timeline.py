@@ -568,7 +568,7 @@ class GameTimelineTracker:
                 self.state = GameState.P2_RUNNING
                 self.add_event(
                     self._period_event_time(ts),
-                    f"Period 2 began (Score: {score or 'unknown'})",
+                    "Period 2 began",
                     reading,
                 )
             elif period is not None and period >= 3:
@@ -600,7 +600,7 @@ class GameTimelineTracker:
                 self.state = GameState.P2_RUNNING
                 self.add_event(
                     self._period_event_time(ts),
-                    f"Period 2 began (Score: {score or 'unknown'})",
+                    "Period 2 began",
                     reading,
                 )
 
@@ -613,7 +613,7 @@ class GameTimelineTracker:
                 self.state = GameState.P3_RUNNING
                 self.add_event(
                     self._period_event_time(ts),
-                    f"Period 3 began (Score: {score or 'unknown'})",
+                    "Period 3 began",
                     reading,
                 )
             elif (
@@ -631,7 +631,7 @@ class GameTimelineTracker:
                 self.state = GameState.P3_RUNNING
                 self.add_event(
                     self._period_event_time(ts),
-                    f"Period 3 began (Score: {score or 'unknown'})",
+                    "Period 3 began",
                     reading,
                 )
 
@@ -662,11 +662,10 @@ class GameTimelineTracker:
                     )
                     self.state = GameState.OT_RUNNING
                 else:
-                    score_str = f"{score[0]}-{score[1]}" if score else "regulation"
                     return self._begin_pending_end(
                         ts,
                         ts,
-                        f"Period 3 clock reached 0:00 (Score: {score_str}).",
+                        "Period 3 clock reached 0:00.",
                         reading,
                     )
 

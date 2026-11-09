@@ -1,0 +1,727 @@
+{
+  "samples": [
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          2,
+          5
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_0000",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_0000.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "ed6ad6e43f2727fa3cf7d1badcd2ec17c4f51ae93ee185be84cc08e31ac74c49",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 0
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "scoreboard_absent",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": false,
+        "score": null
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_1200",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_1200.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "7b32efcac7e08deb76353b8793287a72582f5a6fec02e81ac5846036296b2f48",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 1200
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          0,
+          0
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_1420",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_1420.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "a987f5f3be620bb80ea97b045dd4e97f0bf75546020a8aa55d11d0c1dc8634fb",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 1420
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          0,
+          0
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_1560",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_1560.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "62b70d32f2812313b840aab04bac76550a9b4c755bd4bc8b78cebd472122e15f",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 1560
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          1,
+          0
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_1800",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_1800.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "614f1a3b8c64e7a3f98ba8856b3a469db8748372e738138865f663bb8887ff3b",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 1800
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          4,
+          1
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_2940",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_2940.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "35284544222cb2f91094187bef4988618e9d611b3e6c3450676bf79debaec8f3",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 2940
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          4,
+          1
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_3030",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_3030.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "be010828fdcf1348dd220324fb9e132c229797631fdf7a65f5171e8066d78002",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 3030
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          4,
+          2
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_3600",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_3600.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "c6dc17511a3ac9e8b6e12b1f34053674b9399096d2ebe4b43b86d60abfd1dd61",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 3600
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          6,
+          2
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_4450",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_4450.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "ce031f017b2fee7757b08a72e8464a391daf4438ca623289e7ba0bde0c00e6f6",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 4450
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          6,
+          2
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_4530",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_4530.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "067ea61da75694f81c1c45e3d32acaf4843b2fbb056352f11f52fa3969bbda95",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 4530
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          6,
+          4
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_5400",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_5400.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "0c1026d99895fc44285c362aaff28556dcde8042f31540f2a3d1110828b7a9ed",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 5400
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          6,
+          5
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_6000",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_6000.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "7f9b454210d38d05fe3e96cf5a9788bdf123c43d8e7b8b1219bf5d907865279e",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 6000
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          7,
+          5
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_6380",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_6380.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "f75992277edbd27450a895af7f5b90ae426417b1ca1f308193c2cd166c82a9c4",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 6380
+    },
+    {
+      "bbox": [
+        57,
+        14,
+        326,
+        100
+      ],
+      "category": "score",
+      "config": {
+        "clock_roi": [
+          0.29,
+          0.56,
+          0.7,
+          0.9
+        ],
+        "full_roi": [
+          0.045,
+          0.02,
+          0.255,
+          0.14
+        ],
+        "period_roi": [
+          0.34,
+          0.02,
+          0.65,
+          0.22
+        ],
+        "score_roi": [
+          0.3,
+          0.2,
+          0.7,
+          0.58
+        ]
+      },
+      "expected": {
+        "present": true,
+        "score": [
+          7,
+          5
+        ]
+      },
+      "id": "20261108-ducks12aa-vs-pbk12aa_score_6400",
+      "path": "overlays/20261108-ducks12aa-vs-pbk12aa_score_6400.png",
+      "preset": "blackbear",
+      "review_note": "Visible score independently inspected in production-path overlay contact sheets. Game/period checkpoint scores also supplied by the user. Only presence and visible score reviewed; operator period/clock/score errors are not corrected or used as labels.",
+      "review_status": "reviewed",
+      "sha256": "dad7a1603e8686136d348bb609c54043241f6e8c814dbf917e25f444bf29e4cd",
+      "source": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "template_training_overlap": false,
+      "timestamp": 6400
+    }
+  ],
+  "schema_version": 1,
+  "sources": [
+    {
+      "duration": 6447.637229,
+      "fps": 30.0,
+      "height": 720,
+      "name": "20261108-ducks12aa-vs-pbk12aa-raw.mp4",
+      "sha256": "7f4fdc53e6865107d0984fa8cca1952af28cd0b3875833787355511afe5b6b47",
+      "width": 1280
+    }
+  ],
+  "traces": []
+}
