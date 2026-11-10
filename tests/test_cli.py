@@ -422,6 +422,40 @@ class TestAnalysisStatus(unittest.TestCase):
         self.assertIn("Score: unknown", output)
         self.assertNotIn("Score: 0-0", output)
 
+    def test_unknown_period_readings_preserve_last_seen_score(self):
+        def read(ts):
+            return ScoreboardReading(
+                present=True,
+                timestamp=ts,
+                period=None,
+                clock_seconds=None,
+                score=(4, 1) if ts == 0 else None,
+            )
+
+        output, _, _, _ = self._run(read, duration=30, verbose=True)
+        self.assertIn(
+            "[00:10] P:- | Clock: --:-- | " "Score: 4-1 (last seen at 00:00)",
+            output,
+        )
+
+    def test_p1_candidate_confirmation_preserves_score_from_same_run(self):
+        def read(ts):
+            return ScoreboardReading(
+                present=True,
+                timestamp=ts,
+                period=1,
+                clock_seconds=400 if ts == 0 else 900 - (ts - 10),
+                score=(4, 1) if ts == 0 else None,
+            )
+
+        output, _, _, _ = self._run(read, duration=30, verbose=True)
+        detected = next(
+            line
+            for line in output.splitlines()
+            if "Period 1 scoreboard detected" in line
+        )
+        self.assertIn("Score: 4-1 (last seen at 00:00)", detected)
+
     def test_previous_game_score_does_not_leak_into_new_game_status(self):
         def read(ts):
             if ts < 20:
@@ -498,13 +532,24 @@ class TestAnalysisStatus(unittest.TestCase):
 
     def test_resumed_game_updates_score_after_false_end(self):
         def read(ts):
-            if ts in (3010, 3020):
+            if ts == 3010:
                 return ScoreboardReading(True, ts, 3, 120, (5, 1))
+            if ts == 3020:
+                return ScoreboardReading(True, ts, 3, 110, None)
+            if ts >= 3030:
+                return ScoreboardReading(True, ts, 3, 100, None)
             return _scripted_reading(ts)
 
-        output, _, _, _ = self._run(read, duration=3030, sample_interval=50)
-        event = next(line for line in output.splitlines() if "False game end" in line)
-        self.assertTrue(event.endswith("| Score: 5-1"), event)
+        output, _, _, _ = self._run(
+            read, duration=3040, sample_interval=10, verbose=True
+        )
+        false_end = "False game end"
+        event = next(line for line in output.splitlines() if false_end in line)
+        self.assertTrue(event.endswith("Score: 5-1 (last seen at 50:10)"), event)
+        self.assertIn(
+            "[50:30] P:3 | Clock: 01:40 | Score: 5-1 (last seen at 50:10)",
+            output,
+        )
 
     def test_final_horn_at_end_of_footage_uses_last_sample_score(self):
         def read(ts):

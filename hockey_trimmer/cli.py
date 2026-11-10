@@ -125,6 +125,10 @@ def analyze_video(
     reported_events = 0
     last_display_score = None
     last_display_score_time = None
+    last_display_score_context = None
+    p1_score_context = None
+    pending_resume_score = None
+    pending_resume_score_time = None
     confirm_step = max(1.0, min(sample_interval, end_confirm_interval))
 
     def score_status(timestamp: float) -> str:
@@ -149,14 +153,56 @@ def analyze_video(
         reading = read_frame(t_curr, "scan")
         if reading is not None:
             previous_state = timeline.state
-            previous_candidate = timeline.p1_candidate_start
+            was_searching_start = previous_state == GameState.SEARCHING_START
+            previous_absent_since = getattr(timeline, "absent_since", None)
             is_complete = timeline.process_reading(reading)
-            if timeline.state == GameState.SEARCHING_START and (
-                timeline.p1_candidate_start is None
-                or timeline.p1_candidate_start != previous_candidate
-            ):
+            start_gap_reset = (
+                was_searching_start
+                and reading.present
+                and previous_absent_since is not None
+                and reading.timestamp - previous_absent_since
+                >= getattr(timeline, "start_gap_reset", float("inf"))
+            )
+            if start_gap_reset:
                 last_display_score = None
                 last_display_score_time = None
+                last_display_score_context = None
+                p1_score_context = None
+
+            if was_searching_start and reading.period == 1:
+                current_p1_context = getattr(
+                    timeline, "period_run_start", reading.timestamp
+                )
+                if current_p1_context != p1_score_context:
+                    if last_display_score_context != current_p1_context:
+                        last_display_score = None
+                        last_display_score_time = None
+                    p1_score_context = current_p1_context
+                    last_display_score_context = current_p1_context
+
+            if previous_state == GameState.PENDING_GAME_END:
+                resumed_clock = (
+                    reading.present
+                    and reading.clock_seconds is not None
+                    and reading.clock_seconds
+                    > getattr(timeline, "CLOCK_END_THRESHOLD", 2.0)
+                )
+                if resumed_clock and reading.score is not None:
+                    pending_resume_score = reading.score
+                    pending_resume_score_time = reading.timestamp
+
+                if timeline.state == GameState.GAME_COMPLETE:
+                    pending_resume_score = None
+                    pending_resume_score_time = None
+                elif timeline.state != GameState.PENDING_GAME_END:
+                    if pending_resume_score is not None:
+                        last_display_score = pending_resume_score
+                        last_display_score_time = pending_resume_score_time
+                    pending_resume_score = None
+                    pending_resume_score_time = None
+            elif timeline.state == GameState.PENDING_GAME_END:
+                pending_resume_score = None
+                pending_resume_score_time = None
 
             score_is_applicable = True
             if previous_state == GameState.PENDING_GAME_END and timeline.state in (
@@ -178,6 +224,8 @@ def analyze_video(
             if reading.present and reading.score is not None and score_is_applicable:
                 last_display_score = reading.score
                 last_display_score_time = reading.timestamp
+                if p1_score_context is not None:
+                    last_display_score_context = p1_score_context
 
             if verbose and reading.present:
                 clock_str = reading.clock_formatted
