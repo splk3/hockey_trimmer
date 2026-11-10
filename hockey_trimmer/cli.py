@@ -89,6 +89,9 @@ def analyze_video(
         print("   End confirmation: disabled")
 
     detector = ScoreboardDetector(preset=preset, custom_roi=custom_roi)
+    warning = detector.ocr.tesseract_warning
+    if warning is not None:
+        print(warning, file=sys.stderr)
     timeline = GameTimelineTracker(
         buffer_before=buffer_before,
         buffer_after=buffer_after,
@@ -119,28 +122,120 @@ def analyze_video(
 
     print("\n🔍 Scanning for scoreboard and game transitions...")
 
-    last_reported_state = None
+    reported_events = 0
+    last_display_score = None
+    last_display_score_time = None
+    last_display_score_context = None
+    p1_score_context = None
+    pending_resume_score = None
+    pending_resume_score_time = None
     confirm_step = max(1.0, min(sample_interval, end_confirm_interval))
 
+    def score_status(timestamp: float) -> str:
+        if last_display_score is None or last_display_score_time is None:
+            return "unknown"
+        home, away = last_display_score
+        text = f"{home}-{away}"
+        if last_display_score_time != timestamp:
+            text += f" (last seen at {format_seconds(last_display_score_time)})"
+        return text
+
+    def report_events() -> None:
+        nonlocal reported_events
+        for event in timeline.events[reported_events:]:
+            event.description += f" | Score: {score_status(event.timestamp)}"
+            print(f"   ⚡ [{event.timestamp_formatted}] {event.description}")
+        reported_events = len(timeline.events)
+
     while t_curr < duration:
+        sampled_at = t_curr
         step = sample_interval
         reading = read_frame(t_curr, "scan")
         if reading is not None:
+            previous_state = timeline.state
+            was_searching_start = previous_state == GameState.SEARCHING_START
+            previous_absent_since = getattr(timeline, "absent_since", None)
             is_complete = timeline.process_reading(reading)
+            start_gap_reset = (
+                was_searching_start
+                and reading.present
+                and previous_absent_since is not None
+                and reading.timestamp - previous_absent_since
+                >= getattr(timeline, "start_gap_reset", float("inf"))
+            )
+            if start_gap_reset:
+                last_display_score = None
+                last_display_score_time = None
+                last_display_score_context = None
+                p1_score_context = None
+
+            if was_searching_start and reading.period == 1:
+                current_p1_context = getattr(
+                    timeline, "period_run_start", reading.timestamp
+                )
+                if current_p1_context != p1_score_context:
+                    if last_display_score_context != current_p1_context:
+                        last_display_score = None
+                        last_display_score_time = None
+                    p1_score_context = current_p1_context
+                    last_display_score_context = current_p1_context
+
+            if previous_state == GameState.PENDING_GAME_END:
+                resumed_clock = (
+                    reading.present
+                    and reading.clock_seconds is not None
+                    and reading.clock_seconds
+                    > getattr(timeline, "CLOCK_END_THRESHOLD", 2.0)
+                )
+                if resumed_clock and reading.score is not None:
+                    pending_resume_score = reading.score
+                    pending_resume_score_time = reading.timestamp
+
+                if timeline.state == GameState.GAME_COMPLETE:
+                    pending_resume_score = None
+                    pending_resume_score_time = None
+                elif timeline.state != GameState.PENDING_GAME_END:
+                    if pending_resume_score is not None:
+                        last_display_score = pending_resume_score
+                        last_display_score_time = pending_resume_score_time
+                    pending_resume_score = None
+                    pending_resume_score_time = None
+            elif timeline.state == GameState.PENDING_GAME_END:
+                pending_resume_score = None
+                pending_resume_score_time = None
+
+            score_is_applicable = True
+            if previous_state == GameState.PENDING_GAME_END and timeline.state in (
+                GameState.PENDING_GAME_END,
+                GameState.GAME_COMPLETE,
+            ):
+                # The next game's scoreboard may appear during confirmation.
+                terminal_period = (
+                    4 if timeline.pending_end_prev_state == GameState.OT_RUNNING else 3
+                )
+                at_horn = (
+                    reading.clock_seconds is not None
+                    and reading.clock_seconds <= timeline.CLOCK_END_THRESHOLD
+                )
+                score_is_applicable = (
+                    reading.period == terminal_period
+                    and (reading.clock_seconds is None or at_horn)
+                ) or (reading.period is None and at_horn)
+            if reading.present and reading.score is not None and score_is_applicable:
+                last_display_score = reading.score
+                last_display_score_time = reading.timestamp
+                if p1_score_context is not None:
+                    last_display_score_context = p1_score_context
 
             if verbose and reading.present:
                 clock_str = reading.clock_formatted
                 print(
                     f"   [{format_seconds(t_curr)}] "
                     f"P:{reading.period or '-'} | "
-                    f"Clock: {clock_str} | Score: {reading.score or '-'}"
+                    f"Clock: {clock_str} | Score: {score_status(t_curr)}"
                 )
 
-            if timeline.state != last_reported_state:
-                last_reported_state = timeline.state
-                if timeline.events:
-                    latest = timeline.events[-1]
-                    print(f"   ⚡ [{latest.timestamp_formatted}] {latest.description}")
+            report_events()
 
             if is_complete:
                 print(
@@ -156,14 +251,17 @@ def analyze_video(
         t_curr += step
         sample_idx += 1
         if sample_idx % 20 == 0 and not verbose:
-            pct = min(100.0, (t_curr / duration) * 100)
+            pct = min(100.0, (sampled_at / duration) * 100)
             print(
-                f"   Progress: {pct:.1f}% ({format_seconds(t_curr)} / {format_seconds(duration)})...",
+                f"   Progress: {pct:.1f}% "
+                f"({format_seconds(sampled_at)} / {format_seconds(duration)}) "
+                f"| Score: {score_status(sampled_at)}...",
                 end="\r",
                 flush=True,
             )
 
     timeline.finalize()
+    report_events()
 
     print(f"\n   Scan completed in {time.time() - start_time_proc:.1f}s.")
 

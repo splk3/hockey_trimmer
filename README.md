@@ -22,13 +22,20 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
 - **First Complete Game Selection**: Intelligently ignores warmups and mid-game
   recordings from previous matches, locking onto the _first complete match_
   (Period 1 -> Period 2 -> Period 3 -> End).
-- **Self-Contained Digit & Period Recognition**: Reads digital game clocks
-  (`MM:SS`) and periods (`1`, `2`, `3`, `OT`) without requiring external
-  Tesseract binaries. Black Bear TV overlays are matched against grayscale
+- **Self-Contained Score, Clock & Period Recognition**: Reads Black Bear TV
+  scores (including two-digit team scores), digital game clocks (`MM:SS`),
+  and periods (`1`, `2`, `3`, `OT`) without requiring external Tesseract
+  binaries. Black Bear TV overlays are matched against grayscale
   templates cut from real broadcast frames (`hockey_trimmer/assets/blackbear/`), which
   reliably separates the tiny period tab digits (e.g. `3` vs `1`) and clock
   digits (`3`/`8`, `4`/`0`) even after JPEG compression. Ambiguous template
   matches are not guessed; generic OCR and optional Tesseract provide fallback.
+- **Score Status During Analysis**: Progress updates and timeline events include
+  readable scores such as `4-1`. When a score cannot be read, the last readable
+  score is explicitly labeled with its observation time, for example
+  `4-1 (last seen at 50:30)`; no applicable reading is shown as `unknown`.
+  Last-seen values are display context, not new OCR observations. OCR reports
+  the visible overlay, which can itself contain operator errors.
 - **Fast Lossless Stream Copy**: Defaults to `ffmpeg -c copy` snapped to
   adjacent keyframes—cuts multi-gigabyte video files in seconds with zero CPU
   re-encoding overhead and zero quality loss.
@@ -122,8 +129,16 @@ LiveBarn, Pixellot, and standard broadcast scorebugs).
     ```
 
 - _(Optional)_ **Tesseract OCR**: Only needed if you want external OCR fallback
-  on non-standard custom scoreboard fonts
-  (`sudo apt-get install tesseract-ocr`).
+  on non-standard custom scoreboard fonts or uncertain template matches.
+  The `pytesseract` Python package in `requirements.txt` is a wrapper, not the
+  Tesseract engine. At analysis startup, the CLI checks the engine and warns
+  once on stderr if fallback is unavailable; analysis continues with the
+  available template matchers.
+  - Ubuntu / Debian: `sudo apt-get install tesseract-ocr`
+  - macOS (Homebrew): `brew install tesseract`
+  - Windows and other platforms: [official installation instructions](https://tesseract-ocr.github.io/tessdoc/Installation.html).
+  - If the Python wrapper is missing, install the project requirements in your
+    active environment with `python -m pip install -r requirements.txt`.
 
 ---
 

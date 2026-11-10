@@ -86,6 +86,7 @@ temp_frames/
 # Only promoted regression fixtures belong in the committed corpus.
 tests/fixtures/regression/*
 !tests/fixtures/regression/manifest.json
+!tests/fixtures/regression/score_manifest.json
 !tests/fixtures/regression/overlays/
 !tests/fixtures/regression/traces/
 tests/fixtures/regression/overlays/*
